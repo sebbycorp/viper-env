@@ -45,7 +45,7 @@ Secrets live in **HashiCorp Vault** and are materialized into the cluster by
 ```
 Vault KV v2  secret/data/lab/viper/...
         │
-        │  Kubernetes auth (ServiceAccount, no static token in git)
+        │  AppRole (role-id + secret-id live only in Secret vault-approle)
         ▼
 ClusterSecretStore/vault-lab
         │
@@ -53,10 +53,14 @@ ClusterSecretStore/vault-lab
 ExternalSecret  →  Kubernetes Secret (cluster only, not this repo)
 ```
 
-Vault URL: `https://vault.maniak.lab:8200`. Prefer HTTPS. The IP fallback
-`http://172.16.10.111:8200` is lab-only and sends the Kubernetes auth JWT
-in cleartext — use HTTPS plus an out-of-band `caProvider` ConfigMap instead
-when you can. Auth method: Kubernetes. KV prefix: `secret/lab/viper/`.
+Vault URL: `http://172.16.10.111:8200` (lab Vault speaks **HTTP only** —
+HTTPS clients get `http: server gave HTTP response to HTTPS client`).
+Auth method: **AppRole**. Kubernetes auth was abandoned for Omni: the
+API proxy breaks TokenReview (403). KV prefix: `secret/lab/viper/`.
+
+The AppRole credentials live in a bootstrap-only Secret `vault-approle`
+in namespace `external-secrets` (keys `role-id`, `secret-id`). Create it
+out-of-band. **Never commit that Secret.**
 
 If you are about to `git add` a file that could unlock the cluster, stop.
 `.gitignore` excludes common credential patterns. PRs also run gitleaks.
@@ -89,9 +93,10 @@ Complete these **outside git**. Do not commit the outputs.
    [Argo CD deploy key](#argo-cd-deploy-key-required). If you lock down
    AppProject `sourceRepos` (default is `*`), allow that SSH URL and
    `https://charts.external-secrets.io`.
-3. **Vault** reachable from the cluster, Kubernetes auth enabled, and role
-   `viper-eso` bound to ServiceAccount `external-secrets` in namespace
-   `external-secrets`:
+3. **Vault** reachable from the cluster over HTTP, AppRole auth enabled, and
+   a bootstrap-only Kubernetes Secret `vault-approle` in namespace
+   `external-secrets` (keys `role-id` and `secret-id`). Never commit that
+   Secret.
 
    ```bash
    vault policy write viper-eso - <<'HCL'
@@ -103,25 +108,23 @@ Complete these **outside git**. Do not commit the outputs.
    }
    HCL
 
-   vault write auth/kubernetes/role/viper-eso \
-     bound_service_account_names=external-secrets \
-     bound_service_account_namespaces=external-secrets \
-     policies=viper-eso \
-     ttl=1h
+   vault write auth/approle/role/viper-eso \
+     token_policies=viper-eso \
+     token_ttl=1h
+
+   kubectl -n external-secrets create secret generic vault-approle \
+     --from-literal=role-id='<REPLACE_ME>' \
+     --from-literal=secret-id='<REPLACE_ME>'
    ```
 
-   Vault 1.21+ may also need `bound_audiences=vault` on that role and
-   `audiences: [vault]` on the ClusterSecretStore (commented in
-   `apps/external-secrets/cluster-secret-store.yaml`). Grant the reviewer
-   ServiceAccount `system:auth-delegator` if Vault uses TokenReview.
-
-   If the store is not Ready: DNS/TLS → HTTPS + `caProvider` (not HTTP);
-   403 → role/policy; audience error → uncomment `audiences`.
+   If the store is not Ready: HTTP vs HTTPS → use
+   `http://172.16.10.111:8200` (lab Vault is HTTP-only); 403 → AppRole
+   role/policy or missing `vault-approle` keys.
 4. **Demo KV object** (non-sensitive) created before the sample ExternalSecret
    will sync:
 
    ```bash
-   vault kv put secret/lab/viper/demo demo=hello-omni-viper
+   vault kv put secret/lab/viper/demo message=hello-from-vault
    ```
 
 ## Bootstrap
@@ -148,9 +151,8 @@ kubectl -n argocd get applications,applicationsets
 ```
 
 The demo Kubernetes Secret `vault-demo` in `external-secrets` appears after
-ESO is Ready **and** the Vault path exists. If Vault DNS is missing, prefer
-HTTPS + `caProvider`. The HTTP IP overlay is documented in
-`clusters/omni-viper/README.md` as a last resort.
+ESO is Ready, Secret `vault-approle` exists, **and** Vault path
+`secret/lab/viper/demo` has property `message`.
 
 ## Adding applications
 
@@ -174,8 +176,8 @@ ExternalSecret. Do not add a `kind: Secret` with real `data` / `stringData`.
 ## Never commit
 
 - `.env` files, kubeconfigs, `*.pem` / `*.key`, SSH private keys, license keys
-- Vault tokens, GitHub PATs, Omni/Sidero credentials
-- Decoded TLS material or copied `argocd-secret` / `vault-token` YAML
+- Vault tokens, AppRole role-id/secret-id, GitHub PATs, Omni/Sidero credentials
+- Decoded TLS material or copied `argocd-secret` / `vault-token` / `vault-approle` YAML
 
 Scan before you push:
 

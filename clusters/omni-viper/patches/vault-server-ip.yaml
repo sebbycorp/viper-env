@@ -1,6 +1,7 @@
 # Optional JSON patch. Used only when syncing clusters/omni-viper.
-# Lab-only: HTTP posts the Kubernetes auth JWT in cleartext.
-# Prefer https://vault.maniak.lab:8200 plus an out-of-band caProvider.
+# Lab Vault at 172.16.10.111 speaks HTTP only. ClusterSecretStore vault-lab
+# already defaults to this URL and AppRole auth (Secret vault-approle,
+# created out-of-band). Kubernetes auth was abandoned for Omni.
 - op: replace
   path: /spec/provider/vault/server
   value: http://172.16.10.111:8200

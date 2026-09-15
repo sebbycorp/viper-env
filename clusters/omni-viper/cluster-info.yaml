@@ -11,6 +11,7 @@ data:
   clusterName: omni-viper
   kubernetesVersion: "1.34"
   talosVersion: "1.11"
-  vaultServer: https://vault.maniak.lab:8200
-  vaultServerFallback: http://172.16.10.111:8200
+  vaultServer: http://172.16.10.111:8200
+  vaultAuth: approle
+  vaultAuthSecret: vault-approle
   vaultKvPrefix: secret/lab/viper
