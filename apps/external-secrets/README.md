@@ -7,19 +7,20 @@ and a non-sensitive demo `ExternalSecret`.
 
 ## Vault (out-of-band)
 
-Nothing in git authenticates to Vault. Create the Kubernetes auth role and
-KV data **on the Vault server**, not in this repo.
+Kubernetes auth was abandoned for Omni: the API proxy breaks Vault
+TokenReview (403). Use **AppRole**. Create the AppRole, the bootstrap-only
+Secret `vault-approle`, and KV data **on the Vault server / cluster**, not
+in this repo. Never commit `role-id` or `secret-id`.
 
 | Item | Value |
 | --- | --- |
-| Server | `https://vault.maniak.lab:8200` |
+| Server | `http://172.16.10.111:8200` (HTTP only) |
 | KV mount | `secret` (KV v2; API path `secret/data/lab/viper/...`) |
-| Auth | Kubernetes auth, mount `kubernetes` |
-| Role | `viper-eso` — must exist in Vault; rename the ClusterSecretStore field if yours differs |
-| Service account | `external-secrets` in namespace `external-secrets` (pinned in the Helm Application) |
-| Demo path | `secret/lab/viper/demo` (ESO remote key `lab/viper/demo`) |
+| Auth | AppRole, mount `approle` |
+| Credentials | Secret `vault-approle` in namespace `external-secrets` (keys `role-id`, `secret-id`) |
+| Demo path | `secret/lab/viper/demo` (ESO remote key `lab/viper/demo`, property `message`) |
 
-Create the policy and role on Vault (no tokens committed):
+Create the policy and AppRole on Vault (no credentials committed):
 
 ```bash
 vault policy write viper-eso - <<'HCL'
@@ -31,44 +32,36 @@ path "secret/metadata/lab/viper/*" {
 }
 HCL
 
-vault write auth/kubernetes/role/viper-eso \
-  bound_service_account_names=external-secrets \
-  bound_service_account_namespaces=external-secrets \
-  policies=viper-eso \
-  ttl=1h
+vault write auth/approle/role/viper-eso \
+  token_policies=viper-eso \
+  token_ttl=1h
+
+kubectl -n external-secrets create secret generic vault-approle \
+  --from-literal=role-id='<REPLACE_ME>' \
+  --from-literal=secret-id='<REPLACE_ME>'
 ```
-
-Vault 1.21+ may require `bound_audiences=vault` on the role and
-`audiences: [vault]` on the ClusterSecretStore (field is commented there).
-
-Grant the reviewer `system:auth-delegator` if Vault uses TokenReview.
-Adjust `kubernetes_host` / CA for how Vault reaches the `omni-viper` API.
 
 Create the **non-sensitive** demo key out-of-band:
 
 ```bash
-vault kv put secret/lab/viper/demo demo=hello-omni-viper
+vault kv put secret/lab/viper/demo message=hello-from-vault
 ```
-
-If `vault.maniak.lab` uses a private CA, create ConfigMap `vault-ca` in
-`external-secrets` out-of-band and uncomment `caProvider` in
-`cluster-secret-store.yaml`. Do not commit the CA file.
 
 ### Store not Ready
 
 | Symptom | Likely cause | What to do |
 | --- | --- | --- |
-| TLS / x509 | Private lab CA | HTTPS + out-of-band `caProvider` ConfigMap |
-| Dial / DNS | Name not resolvable | Fix DNS; avoid HTTP if you can |
-| 403 | Role or policy | Check `viper-eso` bindings and policy |
-| Audience | Vault 1.21+ | Set matching audiences on role and store |
+| `HTTP response to HTTPS client` | Lab Vault is HTTP-only | Use `http://172.16.10.111:8200` |
+| TokenReview 403 | Kubernetes auth via Omni proxy | Keep AppRole; do not switch back |
+| 403 / invalid role | AppRole or policy | Check Vault AppRole and `viper-eso` policy |
+| Missing credentials | `vault-approle` not created | Create the Secret out-of-band |
 
-## Fallback server URL (lab only)
+## Lab server URL
 
-`clusters/omni-viper/patches/vault-server-ip.yaml` switches the store to
-`http://172.16.10.111:8200`. That sends the Kubernetes ServiceAccount JWT
-to Vault in **cleartext**. Prefer HTTPS + `caProvider`. See
-`clusters/omni-viper/README.md`.
+`ClusterSecretStore/vault-lab` already defaults to
+`http://172.16.10.111:8200`. The optional overlay
+`clusters/omni-viper/patches/vault-server-ip.yaml` keeps that same HTTP
+URL if you sync `clusters/omni-viper`.
 
 ## Adding real secrets
 
