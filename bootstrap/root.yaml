@@ -10,7 +10,9 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/sebbycorp/viper-oss-env.git
+    # Private repo via read-only GitHub deploy key (title: argocd-omni-viper).
+    # Register the SSH private key in Argo CD out-of-band. Never commit it.
+    repoURL: git@github.com:sebbycorp/viper-oss-env.git
     targetRevision: HEAD
     path: apps
   destination:
