@@ -1,20 +1,20 @@
 # Bootstrap (app-of-apps)
 
-Apply **only** `root.yaml` (or this directory) against the in-cluster Argo CD.
-The root Application then syncs `apps/`, which owns child Applications and the
-ApplicationSet.
+Apply **only** this directory once against the in-cluster Argo CD. The root
+Application then syncs `apps/`. Later edits to `root.yaml` are not
+auto-synced — re-apply if you change them.
 
 ## Apply once
 
 Argo CD is already installed on `omni-viper`. Register this **private** repo
-out-of-band first (token or SSH deploy key — never commit it):
+with the read-only deploy key titled `argocd-omni-viper` (SSH private key
+stays in Argo CD, never in git):
 
 ```bash
-# Example — run locally. Replace placeholders. Do not commit the result.
-argocd repo add https://github.com/sebbycorp/viper-oss-env.git \
+# Example — run locally. Replace the path. Do not commit the key.
+argocd repo add git@github.com:sebbycorp/viper-oss-env.git \
   --name viper-oss-env \
-  --username <REPLACE_ME> \
-  --password <REPLACE_ME>
+  --ssh-private-key-path <REPLACE_ME>
 ```
 
 Then:

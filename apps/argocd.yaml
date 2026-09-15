@@ -16,7 +16,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/sebbycorp/viper-oss-env.git
+    repoURL: git@github.com:sebbycorp/viper-oss-env.git
     targetRevision: HEAD
     path: apps/argocd
   destination:
@@ -28,4 +28,3 @@ spec:
       selfHeal: true
     syncOptions:
       - ServerSideApply=true
-      - RespectIgnoreDifferences=true

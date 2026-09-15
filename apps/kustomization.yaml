@@ -4,3 +4,4 @@ resources:
   - applicationset.yaml
   - argocd.yaml
   - external-secrets.yaml
+  - external-secrets-config.yaml

@@ -12,7 +12,7 @@ spec:
     - missingkey=error
   generators:
     - git:
-        repoURL: https://github.com/sebbycorp/viper-oss-env.git
+        repoURL: git@github.com:sebbycorp/viper-oss-env.git
         revision: HEAD
         directories:
           - path: apps/*
@@ -32,7 +32,7 @@ spec:
     spec:
       project: default
       source:
-        repoURL: https://github.com/sebbycorp/viper-oss-env.git
+        repoURL: git@github.com:sebbycorp/viper-oss-env.git
         targetRevision: HEAD
         path: '{{.path.path}}'
       destination:
