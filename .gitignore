@@ -1,0 +1,62 @@
+# Local environment files — never commit
+.env
+.env.*
+!.env.example
+*.local
+
+# Private keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.der
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+id_ecdsa
+id_ecdsa.*
+id_dsa
+id_dsa.*
+
+# Kubernetes credentials
+kubeconfig
+kubeconfig.*
+*.kubeconfig
+.kube/
+admin.conf
+
+# Generic credentials
+credentials
+credentials.*
+**/credentials.json
+**/service-account*.json
+.vault-token
+.vault-token.*
+auth.json
+netrc
+.netrc
+
+# Vendor / product license keys (Solo, agentgateway, etc.)
+*.lic
+*.license
+*license*.key
+*license*.jwt
+*license*.token
+**/licenses/**
+!**/licenses/README.md
+
+# Secret material that must stay in Vault
+*.secret
+*.secrets
+secrets.yaml
+secrets.yml
+**/secrets/**
+
+# Editor / OS noise
+.DS_Store
+*.swp
+*.swo
+*~

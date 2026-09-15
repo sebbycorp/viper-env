@@ -1,0 +1,47 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: omni-viper-apps
+  namespace: argocd
+  labels:
+    cluster: omni-viper
+    app.kubernetes.io/part-of: viper-oss-env
+spec:
+  goTemplate: true
+  goTemplateOptions:
+    - missingkey=error
+  generators:
+    - git:
+        repoURL: https://github.com/sebbycorp/viper-oss-env.git
+        revision: HEAD
+        directories:
+          - path: apps/*
+          # Installed by explicit Application CRs (Helm / self-management).
+          - path: apps/argocd
+            exclude: true
+          - path: apps/external-secrets
+            exclude: true
+  template:
+    metadata:
+      name: '{{.path.basename}}'
+      namespace: argocd
+      labels:
+        cluster: omni-viper
+        app.kubernetes.io/name: '{{.path.basename}}'
+        app.kubernetes.io/part-of: viper-oss-env
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/sebbycorp/viper-oss-env.git
+        targetRevision: HEAD
+        path: '{{.path.path}}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{.path.basename}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
