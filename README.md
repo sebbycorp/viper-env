@@ -7,6 +7,25 @@ Argo CD is already installed on the cluster. This repo is the desired-state
 source for phase 1: app-of-apps bootstrap, Argo CD self-management path, and
 External Secrets Operator talking to HashiCorp Vault.
 
+## Argo CD deploy key (required)
+
+This repo is **private**. Argo CD must clone it over SSH:
+
+```text
+git@github.com:sebbycorp/viper-oss-env.git
+```
+
+Register a **read-only** GitHub deploy key titled `argocd-omni-viper` on
+[the repo deploy keys page](https://github.com/sebbycorp/viper-oss-env/settings/keys).
+Put the matching SSH **private** key only in Argo CD (repo credential Secret).
+**Never commit the private key**, a kubeconfig, or a copied `argocd-secret`.
+
+```bash
+argocd repo add git@github.com:sebbycorp/viper-oss-env.git \
+  --name viper-oss-env \
+  --ssh-private-key-path <REPLACE_ME>
+```
+
 ## Security model
 
 **This repository must never contain secrets.**
@@ -66,20 +85,9 @@ clusters/omni-viper/            # Cluster notes and optional overlays
 Complete these **outside git**. Do not commit the outputs.
 
 1. **Argo CD** running on `omni-viper` (already true for this lab).
-2. **Read-only GitHub deploy key** titled `argocd-omni-viper` on this private
-   repo. Keep the SSH **private** key only in the Argo CD repo Secret on the
-   cluster — never in git.
-
-   ```bash
-   # Run locally against the cluster. The private key file stays on disk / in
-   # Argo CD, not in this repository.
-   argocd repo add git@github.com:sebbycorp/viper-oss-env.git \
-     --name viper-oss-env \
-     --ssh-private-key-path <REPLACE_ME>
-   ```
-
-   If you lock down AppProject `sourceRepos` (default is `*`), allow both
-   `git@github.com:sebbycorp/viper-oss-env.git` and
+2. **Deploy key** for `git@github.com:sebbycorp/viper-oss-env.git` — see
+   [Argo CD deploy key](#argo-cd-deploy-key-required). If you lock down
+   AppProject `sourceRepos` (default is `*`), allow that SSH URL and
    `https://charts.external-secrets.io`.
 3. **Vault** reachable from the cluster, Kubernetes auth enabled, and role
    `viper-eso` bound to ServiceAccount `external-secrets` in namespace
