@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-gitops-placeholder
+  namespace: argocd
+  labels:
+    cluster: omni-viper
+    app.kubernetes.io/name: argocd
+    app.kubernetes.io/part-of: viper-oss-env
+data:
+  cluster: omni-viper
+  note: |
+    Argo CD is already installed on this cluster. This ConfigMap marks the
+    apps/argocd path for future self-management. Replace with Helm values or
+    upstream kustomize only after they match the live install. Never store
+    admin passwords or repo credentials here.

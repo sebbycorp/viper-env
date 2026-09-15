@@ -1,0 +1,31 @@
+# Tracks apps/argocd so Argo CD can self-manage this path later.
+# The cluster already has Argo CD installed — this Application only syncs the
+# placeholder kustomize in-repo. Do not point it at upstream install.yaml
+# until values match the live Omni install.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd
+  namespace: argocd
+  labels:
+    cluster: omni-viper
+    app.kubernetes.io/name: argocd
+    app.kubernetes.io/part-of: viper-oss-env
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/sebbycorp/viper-oss-env.git
+    targetRevision: HEAD
+    path: apps/argocd
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - RespectIgnoreDifferences=true

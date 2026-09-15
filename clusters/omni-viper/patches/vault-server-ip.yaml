@@ -1,0 +1,5 @@
+# Optional JSON patch. Used only when syncing clusters/omni-viper.
+# DNS name https://vault.maniak.lab:8200 remains the default in apps/.
+- op: replace
+  path: /spec/provider/vault/server
+  value: http://172.16.10.111:8200

@@ -1,0 +1,25 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: omni-viper-root
+  namespace: argocd
+  labels:
+    cluster: omni-viper
+    app.kubernetes.io/name: omni-viper-root
+    app.kubernetes.io/part-of: viper-oss-env
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/sebbycorp/viper-oss-env.git
+    targetRevision: HEAD
+    path: apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
