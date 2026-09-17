@@ -1,11 +1,15 @@
 # viper-oss-env
 
 Private GitOps repository for Omni Kubernetes cluster **omni-viper**
-(Kubernetes 1.34 / Talos 1.11).
+(Talos 1.13.10 / Kubernetes 1.36.4, as of the 2026-09-16 upgrade).
 
 Argo CD is already installed on the cluster. This repo is the desired-state
 source for phase 1: app-of-apps bootstrap, Argo CD self-management path, and
 External Secrets Operator talking to HashiCorp Vault.
+
+Proxmox guests are migrating from node **viper** (`172.16.10.6`) to
+**iceman** (`172.16.10.5`). **omni-viper should live on iceman** going
+forward.
 
 ## Argo CD deploy key (required)
 
@@ -65,6 +69,33 @@ out-of-band. **Never commit that Secret.**
 If you are about to `git add` a file that could unlock the cluster, stop.
 `.gitignore` excludes common credential patterns. PRs also run gitleaks.
 
+## Lab status / endpoints
+
+Operator landing page (not GitOps): http://172.16.10.126:3000 — see
+[docs/lab-homepage.md](docs/lab-homepage.md).
+
+| Surface | Endpoint | Notes |
+| --- | --- | --- |
+| Omni UI | https://maniak.na-west-1.omni.siderolabs.io/ | Cluster name `omni-viper` |
+| Node LAN | `172.16.10.178` (`talos-cyv-ekb`) | Talos v1.13.10 / Kubernetes v1.36.4 |
+| Argo CD | https://172.16.10.178:30443 and :30080 | NodePorts on the Talos node |
+| kagent UI | http://172.16.10.178:30500 | ns `kagent`; Substrate in `ate-system` |
+| Vault | `http://172.16.10.111:8200` | HTTP only; AppRole (see above) |
+| Lab Homepage | http://172.16.10.126:3000 | Alpine LXC 143 on iceman |
+
+| Topic | Doc |
+| --- | --- |
+| OSS kagent + Agent Substrate (this Omni cluster, not k3s-viper) | [docs/kagent-substrate.md](docs/kagent-substrate.md) |
+| TypeSafe / Jev MVP (ns `kagent`) | [docs/typesafe-jev.md](docs/typesafe-jev.md) |
+| FortiGate agent plan (upstream k8s-viper) | [docs/fortigate-agent-omni.md](docs/fortigate-agent-omni.md) |
+| Homepage cards + OSS gateway LXCs | [docs/lab-homepage.md](docs/lab-homepage.md) |
+| Doc index | [docs/README.md](docs/README.md) |
+
+Feature gates `PodCertificateRequest` and `ClusterTrustBundle` are
+enabled (required for Agent Substrate). kagent talks to real ate-api at
+`dns:///api.ate-system.svc:443` — the `SUBSTRATE_OPTIONAL` workaround is
+gone after 1.36.4.
+
 ## Layout
 
 ```
@@ -78,6 +109,7 @@ apps/
   argocd/                       # Placeholder for later Argo CD self-management
   external-secrets/             # ClusterSecretStore + demo ExternalSecret
 clusters/omni-viper/            # Cluster notes and optional overlays
+docs/                           # Lab operator docs (not synced by Argo CD)
 .github/workflows/              # gitleaks on pull requests (no workflow secrets)
 ```
 
