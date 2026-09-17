@@ -16,8 +16,8 @@ manifest originals ([fortigate-agent-omni.md](fortigate-agent-omni.md)).
 | Versions | Talos **v1.13.10**, Kubernetes **v1.36.4** (upgrade 2026-09-16) |
 | Feature gates | `PodCertificateRequest` + `ClusterTrustBundle` (required for Agent Substrate) |
 | Argo CD | https://172.16.10.178:30443 and :30080 |
-| kagent UI (HTTPS, preferred) | https://172.16.10.178:30501/ |
-| kagent UI (HTTP, convenience) | http://172.16.10.178:30500 |
+| kagent UI (HTTPS, preferred) | https://viper.maniak.lab:30501/ |
+| kagent UI (HTTP, fallback) | http://172.16.10.178:30500 |
 | Host placement | Should live on Proxmox **iceman** (`172.16.10.5`); guests are migrating off **viper** (`172.16.10.6`) |
 
 ### Namespaces
@@ -32,16 +32,19 @@ workstation. **Never commit them.**
 
 ## kagent UI (HTTPS)
 
-**Primary URL:** https://172.16.10.178:30501/
+**Primary URL:** https://viper.maniak.lab:30501/
 
-Optional `/etc/hosts` (or equivalent) so the hostname SAN matches:
+hosts / DNS (required for the hostname URL):
 
 ```text
-172.16.10.178 kagent.viper.lab
+172.16.10.178 viper.maniak.lab
 ```
 
-Then https://kagent.viper.lab:30501/ also works. The cert SAN list is
-`kagent.viper.lab`, `kagent.maniak.lab`, and IP `172.16.10.178`.
+Use **`viper.maniak.lab`**, not `kagent.viper.lab` or `kagent.maniak.lab`.
+Certificate SANs should include DNS `viper.maniak.lab` and IP
+`172.16.10.178`. Infra will re-issue the live `kagent-ui-tls` cert
+separately so those names match — do not re-issue it from this repo.
+After that, https://172.16.10.178:30501/ still works via the IP SAN.
 
 This is an **intentional lab self-signed / internal CA**, not Let’s
 Encrypt. The UI needs a browser **secure context** so
@@ -49,9 +52,9 @@ Encrypt. The UI needs a browser **secure context** so
 `crypto.randomUUID` polyfill on plain HTTP was a temporary workaround;
 HTTPS is the proper fix.
 
-HTTP NodePort **30500** still works (plain HTTP; not a secure context).
-Keep it for convenience. Prefer HTTPS for UI features that need a
-secure context.
+HTTP NodePort **30500** remains as a fallback (plain HTTP; not a
+secure context). Prefer HTTPS for UI features that need a secure
+context.
 
 ### Already live (do not redeploy)
 
@@ -65,7 +68,7 @@ repo.
 | ClusterIssuer | `selfsigned-cluster-issuer` |
 | Lab CA Certificate | `kagent-lab-ca` |
 | Lab CA ClusterIssuer | `kagent-lab-ca-issuer` |
-| UI Certificate | `kagent-ui-tls` in namespace `kagent` (secret `kagent-ui-tls`); SANs `kagent.viper.lab`, `kagent.maniak.lab`, IP `172.16.10.178` |
+| UI Certificate | `kagent-ui-tls` in namespace `kagent` (secret `kagent-ui-tls`). Intended SANs: DNS `viper.maniak.lab`, IP `172.16.10.178` (infra re-issues separately) |
 | TLS front | Deployment `kagent-ui-tls` (nginx) + Service NodePort **30501** terminating TLS → `kagent-ui:8080` |
 | HTTP front | Existing kagent UI Service NodePort **30500** (unchanged) |
 
@@ -74,7 +77,7 @@ repo.
 Browsers warn on first visit because this is a lab CA, not a public CA.
 
 1. **Browser exception** — accept the warning on
-   https://172.16.10.178:30501/ (enough for most lab use).
+   https://viper.maniak.lab:30501/ (enough for most lab use).
 2. **Import the lab CA** — export the public CA cert from the cluster
    and add it to the OS / browser trust store:
 
