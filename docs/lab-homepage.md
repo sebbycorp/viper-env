@@ -29,7 +29,7 @@ identifiers only** — not credentials.
 | viper | Proxmox node `172.16.10.6` — source host; guests are moving off this node |
 | Omni | https://maniak.na-west-1.omni.siderolabs.io/ (cluster `omni-viper`) |
 | Argo CD | https://172.16.10.178:30443 and :30080 |
-| kagent | http://172.16.10.178:30500 |
+| kagent | https://172.16.10.178:30501/ (preferred; lab self-signed). HTTP `:30500` still works. Trust notes: [kagent-substrate.md](kagent-substrate.md) |
 | FortiGate agent | Same kagent UI — pick agent `fortigate` ([plan](fortigate-agent-omni.md)) |
 | TypeSafe / Jev | Same kagent UI — gated SRE / Jev path ([plan](typesafe-jev.md)) |
 | Vault | `http://172.16.10.111:8200` (HTTP only; see root README) |

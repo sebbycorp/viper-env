@@ -16,7 +16,8 @@ manifest originals ([fortigate-agent-omni.md](fortigate-agent-omni.md)).
 | Versions | Talos **v1.13.10**, Kubernetes **v1.36.4** (upgrade 2026-09-16) |
 | Feature gates | `PodCertificateRequest` + `ClusterTrustBundle` (required for Agent Substrate) |
 | Argo CD | https://172.16.10.178:30443 and :30080 |
-| kagent UI | http://172.16.10.178:30500 |
+| kagent UI (HTTPS, preferred) | https://172.16.10.178:30501/ |
+| kagent UI (HTTP, convenience) | http://172.16.10.178:30500 |
 | Host placement | Should live on Proxmox **iceman** (`172.16.10.5`); guests are migrating off **viper** (`172.16.10.6`) |
 
 ### Namespaces
@@ -28,6 +29,63 @@ manifest originals ([fortigate-agent-omni.md](fortigate-agent-omni.md)).
 
 Kubeconfigs and Omni service-account tokens stay on the operator
 workstation. **Never commit them.**
+
+## kagent UI (HTTPS)
+
+**Primary URL:** https://172.16.10.178:30501/
+
+Optional `/etc/hosts` (or equivalent) so the hostname SAN matches:
+
+```text
+172.16.10.178 kagent.viper.lab
+```
+
+Then https://kagent.viper.lab:30501/ also works. The cert SAN list is
+`kagent.viper.lab`, `kagent.maniak.lab`, and IP `172.16.10.178`.
+
+This is an **intentional lab self-signed / internal CA**, not Let’s
+Encrypt. The UI needs a browser **secure context** so
+`crypto.randomUUID` works (for example `/schedules/new`). A
+`crypto.randomUUID` polyfill on plain HTTP was a temporary workaround;
+HTTPS is the proper fix.
+
+HTTP NodePort **30500** still works (plain HTTP; not a secure context).
+Keep it for convenience. Prefer HTTPS for UI features that need a
+secure context.
+
+### Already live (do not redeploy)
+
+These objects are already on the cluster. This page is operator docs
+only — do not reinstall cert-manager or re-issue the lab CA from this
+repo.
+
+| Object | Where / what |
+| --- | --- |
+| cert-manager | Namespace `cert-manager` |
+| ClusterIssuer | `selfsigned-cluster-issuer` |
+| Lab CA Certificate | `kagent-lab-ca` |
+| Lab CA ClusterIssuer | `kagent-lab-ca-issuer` |
+| UI Certificate | `kagent-ui-tls` in namespace `kagent` (secret `kagent-ui-tls`); SANs `kagent.viper.lab`, `kagent.maniak.lab`, IP `172.16.10.178` |
+| TLS front | Deployment `kagent-ui-tls` (nginx) + Service NodePort **30501** terminating TLS → `kagent-ui:8080` |
+| HTTP front | Existing kagent UI Service NodePort **30500** (unchanged) |
+
+### Trust the lab CA
+
+Browsers warn on first visit because this is a lab CA, not a public CA.
+
+1. **Browser exception** — accept the warning on
+   https://172.16.10.178:30501/ (enough for most lab use).
+2. **Import the lab CA** — export the public CA cert from the cluster
+   and add it to the OS / browser trust store:
+
+```bash
+kubectl -n cert-manager get secret kagent-lab-ca-secret \
+  -o jsonpath='{.data.ca\.crt}' | base64 -d > kagent-lab-ca.crt
+```
+
+That file is a **public CA certificate** for trust, not a private key.
+Do not commit it (`.gitignore` already excludes `*.crt`). Do not export
+or commit TLS private keys.
 
 ## Agent Substrate
 
