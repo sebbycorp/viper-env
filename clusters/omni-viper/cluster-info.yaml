@@ -9,8 +9,12 @@ metadata:
     app.kubernetes.io/part-of: viper-oss-env
 data:
   clusterName: omni-viper
-  kubernetesVersion: "1.34"
-  talosVersion: "1.11"
+  kubernetesVersion: "1.36.4"
+  talosVersion: "1.13.10"
+  lastUpgrade: "2026-09-16"
+  nodeName: talos-cyv-ekb
+  nodeLanIp: 172.16.10.178
+  intendedProxmoxNode: iceman
   vaultServer: http://172.16.10.111:8200
   vaultAuth: approle
   vaultAuthSecret: vault-approle
