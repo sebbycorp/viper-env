@@ -15,7 +15,7 @@ manifest originals ([fortigate-agent-omni.md](fortigate-agent-omni.md)).
 | Node | `talos-cyv-ekb` @ `172.16.10.178` |
 | Versions | Talos **v1.13.10**, Kubernetes **v1.36.4** (upgrade 2026-09-16) |
 | Feature gates | `PodCertificateRequest` + `ClusterTrustBundle` (required for Agent Substrate) |
-| Argo CD | https://172.16.10.178:30443 and http://172.16.10.178:30080 |
+| Argo CD | https://172.16.10.178:30443 and :30080 |
 | kagent UI | http://172.16.10.178:30500 |
 | Host placement | Should live on Proxmox **iceman** (`172.16.10.5`); guests are migrating off **viper** (`172.16.10.6`) |
 

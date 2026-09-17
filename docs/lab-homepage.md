@@ -24,11 +24,11 @@ identifiers only** — not credentials.
 | OSS gateway — agw-oss | LXC 140 @ `172.16.10.114` (iceman) |
 | OSS gateway — bifrost | LXC 141 @ `172.16.10.120` (iceman) |
 | OSS gateway — litellm | LXC 142 @ `172.16.10.125` (iceman) |
-| PDM | Proxmox Datacenter Manager (card on the LXC; URL is not stored in this repo) |
+| PDM | Proxmox Datacenter Manager (homepage card; LAN URL not specified in this brief) |
 | iceman | Proxmox node `172.16.10.5` — target host for guest migration |
 | viper | Proxmox node `172.16.10.6` — source host; guests are moving off this node |
 | Omni | https://maniak.na-west-1.omni.siderolabs.io/ (cluster `omni-viper`) |
-| Argo CD | https://172.16.10.178:30443 and http://172.16.10.178:30080 |
+| Argo CD | https://172.16.10.178:30443 and :30080 |
 | kagent | http://172.16.10.178:30500 |
 | FortiGate agent | Same kagent UI — pick agent `fortigate` ([plan](fortigate-agent-omni.md)) |
 | TypeSafe / Jev | Same kagent UI — gated SRE / Jev path ([plan](typesafe-jev.md)) |
