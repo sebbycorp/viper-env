@@ -12,11 +12,15 @@ spec:
         - name: http
           port: 8080
           nodePort: 30800
-  # Pricing for llm.cost / Cost Management (see model-costs.yaml).
+  # Pricing for llm.cost / Cost Management. Later sources win per model:
+  # model-costs = public prices from models.dev, spark-costs = self-hosted chargeback.
   modelCatalog:
     sources:
       - configMap:
           name: model-costs
+          key: catalog.json
+      - configMap:
+          name: spark-costs
           key: catalog.json
   # Node is CPU-request bound (4 cores) — keep the request small.
   resources:

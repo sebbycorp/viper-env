@@ -6,3 +6,5 @@ resources:
   - fortigate-mcp.yaml
   - tracing.yaml
   - model-costs.yaml
+  - spark-costs.yaml
+  - openai-llm.yaml
