@@ -56,7 +56,7 @@ address above. The `SUBSTRATE_OPTIONAL` workaround is **removed**.
 | ModelConfig | Provider | Notes |
 | --- | --- | --- |
 | `default-model-config` | OpenAI (e.g. `gpt-4.1-mini`) | API key from Vault — path names only: `secret/lab/oss-gateways/openai` or `secret/lab/openai` |
-| `spark-qwen` | OpenAI-compatible | Base `http://172.16.10.173:8000/v1`, model id `unsloth/Qwen3.8-27B-NVFP4` (DGX Spark) |
+| `spark-qwen` | OpenAI-compatible | Base `http://172.16.10.173:8000/v1`, model id `Mia-AiLab/Qwen3.8-Flash-Next-NVFP4` (DGX Spark; was `unsloth/Qwen3.8-27B-NVFP4`) |
 
 Wire keys with ExternalSecret → Kubernetes Secret. Do not paste key
 values into this repo. Example Vault *path* (not a value):
