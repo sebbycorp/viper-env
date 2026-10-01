@@ -8,3 +8,4 @@ resources:
   - model-costs.yaml
   - spark-costs.yaml
   - openai-llm.yaml
+  - openai-models.yaml
