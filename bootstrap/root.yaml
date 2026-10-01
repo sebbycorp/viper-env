@@ -6,13 +6,13 @@ metadata:
   labels:
     cluster: omni-viper
     app.kubernetes.io/name: omni-viper-root
-    app.kubernetes.io/part-of: viper-oss-env
+    app.kubernetes.io/part-of: viper-env
 spec:
   project: default
   source:
     # Private repo via read-only GitHub deploy key (title: argocd-omni-viper).
     # Register the SSH private key in Argo CD out-of-band. Never commit it.
-    repoURL: git@github.com:sebbycorp/viper-oss-env.git
+    repoURL: git@github.com:sebbycorp/viper-env.git
     targetRevision: HEAD
     path: apps
   destination:
