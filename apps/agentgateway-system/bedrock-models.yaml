@@ -1,0 +1,146 @@
+# Bedrock models on the dedicated bedrock-proxy (NodePort 30801), us-east-1 cross-region
+# inference profiles. One pinned route per model so each works in the Solo UI playground.
+# Claude Haiku 4.5 is left out: the AWS account has not submitted the Anthropic
+# use-case form for it (Bedrock returns "Model use case details have not been submitted").
+# Auth: Bedrock API key in Secret bedrock-secret (key: Authorization), created out of band.
+# RuntimeOnly = Bedrock runtime (Converse) API rather than the Mantle endpoint.
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: bedrock-claude-opus-5-5
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      bedrock:
+        region: us-east-1
+        model: us.anthropic.claude-opus-5-5
+        endpointPreference: RuntimeOnly
+  policies:
+    auth:
+      secretRef:
+        name: bedrock-secret
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: bedrock-claude-opus-5-5
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: bedrock-proxy
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /claude-opus-5-5
+      backendRefs:
+        - name: bedrock-claude-opus-5-5
+          group: agentgateway.dev
+          kind: AgentgatewayBackend
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: bedrock-claude-sonnet-5-5
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      bedrock:
+        region: us-east-1
+        model: us.anthropic.claude-sonnet-5-5
+        endpointPreference: RuntimeOnly
+  policies:
+    auth:
+      secretRef:
+        name: bedrock-secret
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: bedrock-claude-sonnet-5-5
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: bedrock-proxy
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /claude-sonnet-5-5
+      backendRefs:
+        - name: bedrock-claude-sonnet-5-5
+          group: agentgateway.dev
+          kind: AgentgatewayBackend
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: bedrock-nova-pro
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      bedrock:
+        region: us-east-1
+        model: us.amazon.nova-pro-v1:0
+        endpointPreference: RuntimeOnly
+  policies:
+    auth:
+      secretRef:
+        name: bedrock-secret
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: bedrock-nova-pro
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: bedrock-proxy
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /nova-pro
+      backendRefs:
+        - name: bedrock-nova-pro
+          group: agentgateway.dev
+          kind: AgentgatewayBackend
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: bedrock-llama4-maverick
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      bedrock:
+        region: us-east-1
+        model: us.meta.llama4-maverick-17b-instruct-v1:0
+        endpointPreference: RuntimeOnly
+  policies:
+    auth:
+      secretRef:
+        name: bedrock-secret
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: bedrock-llama4-maverick
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: bedrock-proxy
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /llama4-maverick
+      backendRefs:
+        - name: bedrock-llama4-maverick
+          group: agentgateway.dev
+          kind: AgentgatewayBackend

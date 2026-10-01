@@ -8,7 +8,9 @@ import json, sys, urllib.request
 from datetime import date
 from decimal import Decimal
 
-PROVIDERS = sys.argv[1:] or ["openai"]
+PROVIDERS = sys.argv[1:] or ["openai", "amazon-bedrock"]
+# models.dev provider id -> agentgateway catalog provider id (gen_ai.provider.name).
+CATALOG_ID = {"amazon-bedrock": "aws.bedrock"}
 OUT = "apps/agentgateway-system/model-costs.yaml"
 FIELDS = {"input": "input", "output": "output", "cache_read": "cacheRead",
           "cache_write": "cacheWrite", "reasoning": "reasoning",
@@ -38,7 +40,16 @@ for p in PROVIDERS:
             entry["tiers"] = tiers
         entry["tags"] = ["models.dev"]
         models[mid] = entry
-    catalog["providers"][p] = {"models": models}
+    if p == "amazon-bedrock":
+        # Requests use cross-region profile ids (us.anthropic...). When models.dev has
+        # no us./eu./apac. entry for a model, alias it to the in-region price.
+        for mid in list(models):
+            if mid.count(".") and mid.split(".")[0] in ("anthropic", "amazon", "meta", "deepseek", "openai", "mistral", "qwen"):
+                for geo in ("us", "eu", "apac"):
+                    alias = f"{geo}.{mid}"
+                    if alias not in models:
+                        models[alias] = {**models[mid], "tags": ["models.dev", "derived-from-in-region"]}
+    catalog["providers"][CATALOG_ID.get(p, p)] = {"models": models}
 
 body = json.dumps(catalog, indent=2)
 with open(OUT, "w") as f:
@@ -55,4 +66,4 @@ data:
   catalog.json: |
 """)
     f.write("".join("    " + line + "\n" for line in body.splitlines()))
-print(f"wrote {OUT}: " + ", ".join(f"{p}={len(catalog['providers'][p]['models'])} models" for p in PROVIDERS))
+print(f"wrote {OUT}: " + ", ".join(f"{k}={len(v['models'])} models" for k, v in catalog["providers"].items()))

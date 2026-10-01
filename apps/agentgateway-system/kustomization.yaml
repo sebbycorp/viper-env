@@ -9,3 +9,5 @@ resources:
   - spark-costs.yaml
   - openai-llm.yaml
   - openai-models.yaml
+  - bedrock-gateway.yaml
+  - bedrock-models.yaml
