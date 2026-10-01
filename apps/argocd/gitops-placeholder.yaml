@@ -6,7 +6,7 @@ metadata:
   labels:
     cluster: omni-viper
     app.kubernetes.io/name: argocd
-    app.kubernetes.io/part-of: viper-oss-env
+    app.kubernetes.io/part-of: viper-env
 data:
   cluster: omni-viper
   note: |

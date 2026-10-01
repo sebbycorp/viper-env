@@ -6,7 +6,7 @@ metadata:
   labels:
     cluster: omni-viper
     app.kubernetes.io/name: omni-viper-cluster-info
-    app.kubernetes.io/part-of: viper-oss-env
+    app.kubernetes.io/part-of: viper-env
 data:
   clusterName: omni-viper
   kubernetesVersion: "1.36.4"

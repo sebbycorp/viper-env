@@ -5,14 +5,14 @@ metadata:
   namespace: argocd
   labels:
     cluster: omni-viper
-    app.kubernetes.io/part-of: viper-oss-env
+    app.kubernetes.io/part-of: viper-env
 spec:
   goTemplate: true
   goTemplateOptions:
     - missingkey=error
   generators:
     - git:
-        repoURL: git@github.com:sebbycorp/viper-oss-env.git
+        repoURL: git@github.com:sebbycorp/viper-env.git
         revision: HEAD
         directories:
           - path: apps/*
@@ -28,11 +28,11 @@ spec:
       labels:
         cluster: omni-viper
         app.kubernetes.io/name: '{{.path.basename}}'
-        app.kubernetes.io/part-of: viper-oss-env
+        app.kubernetes.io/part-of: viper-env
     spec:
       project: default
       source:
-        repoURL: git@github.com:sebbycorp/viper-oss-env.git
+        repoURL: git@github.com:sebbycorp/viper-env.git
         targetRevision: HEAD
         path: '{{.path.path}}'
       destination:

@@ -1,4 +1,4 @@
-# viper-oss-env
+# viper-env
 
 Private GitOps repository for Omni Kubernetes cluster **omni-viper**
 (Talos 1.13.10 / Kubernetes 1.36.4, as of the 2026-09-16 upgrade).
@@ -16,17 +16,17 @@ forward.
 This repo is **private**. Argo CD must clone it over SSH:
 
 ```text
-git@github.com:sebbycorp/viper-oss-env.git
+git@github.com:sebbycorp/viper-env.git
 ```
 
 Register a **read-only** GitHub deploy key titled `argocd-omni-viper` on
-[the repo deploy keys page](https://github.com/sebbycorp/viper-oss-env/settings/keys).
+[the repo deploy keys page](https://github.com/sebbycorp/viper-env/settings/keys).
 Put the matching SSH **private** key only in Argo CD (repo credential Secret).
 **Never commit the private key**, a kubeconfig, or a copied `argocd-secret`.
 
 ```bash
-argocd repo add git@github.com:sebbycorp/viper-oss-env.git \
-  --name viper-oss-env \
+argocd repo add git@github.com:sebbycorp/viper-env.git \
+  --name viper-env \
   --ssh-private-key-path <REPLACE_ME>
 ```
 
@@ -121,7 +121,7 @@ docs/                           # Lab operator docs (not synced by Argo CD)
 Complete these **outside git**. Do not commit the outputs.
 
 1. **Argo CD** running on `omni-viper` (already true for this lab).
-2. **Deploy key** for `git@github.com:sebbycorp/viper-oss-env.git` — see
+2. **Deploy key** for `git@github.com:sebbycorp/viper-env.git` — see
    [Argo CD deploy key](#argo-cd-deploy-key-required). If you lock down
    AppProject `sourceRepos` (default is `*`), allow that SSH URL and
    `https://charts.external-secrets.io`.

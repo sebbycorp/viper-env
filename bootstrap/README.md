@@ -12,8 +12,8 @@ stays in Argo CD, never in git):
 
 ```bash
 # Example — run locally. Replace the path. Do not commit the key.
-argocd repo add git@github.com:sebbycorp/viper-oss-env.git \
-  --name viper-oss-env \
+argocd repo add git@github.com:sebbycorp/viper-env.git \
+  --name viper-env \
   --ssh-private-key-path <REPLACE_ME>
 ```
 

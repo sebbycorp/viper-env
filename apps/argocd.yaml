@@ -10,13 +10,13 @@ metadata:
   labels:
     cluster: omni-viper
     app.kubernetes.io/name: argocd
-    app.kubernetes.io/part-of: viper-oss-env
+    app.kubernetes.io/part-of: viper-env
   annotations:
     argocd.argoproj.io/sync-wave: "0"
 spec:
   project: default
   source:
-    repoURL: git@github.com:sebbycorp/viper-oss-env.git
+    repoURL: git@github.com:sebbycorp/viper-env.git
     targetRevision: HEAD
     path: apps/argocd
   destination:
