@@ -1,0 +1,33 @@
+# FortiGate MCP server (kagent ns) federated through the gateway at /mcp/fortigate.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: fortigate-mcp
+  namespace: agentgateway-system
+spec:
+  mcp:
+    targets:
+      - name: fortigate
+        static:
+          host: fortigate-mcp.kagent.svc.cluster.local
+          port: 8084
+          path: /mcp
+          protocol: StreamableHTTP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: fortigate-mcp
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /mcp/fortigate
+      backendRefs:
+        - name: fortigate-mcp
+          group: agentgateway.dev
+          kind: AgentgatewayBackend

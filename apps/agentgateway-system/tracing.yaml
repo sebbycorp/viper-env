@@ -1,0 +1,19 @@
+# Send gateway traces to the agentgateway Solo UI collector (management chart).
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: tracing
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: agentgateway-proxy
+  frontend:
+    tracing:
+      backendRef:
+        name: solo-enterprise-telemetry-collector
+        namespace: agentgateway-system
+        kind: Service
+        port: 4317
+      randomSampling: "true"

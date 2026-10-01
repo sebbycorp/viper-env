@@ -1,0 +1,21 @@
+# LLM cost catalog (USD per 1M tokens, as strings). The Spark model is self-hosted,
+# so these are notional rates to make spend visible — adjust to your internal chargeback.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: model-costs
+  namespace: agentgateway-system
+data:
+  catalog.json: |
+    {
+      "providers": {
+        "openai": {
+          "models": {
+            "unsloth/Qwen3.8-27B-NVFP4": {
+              "rates": { "input": "0.20", "output": "0.60", "reasoning": "0.60", "cacheRead": "0.05" },
+              "tags": ["self-hosted", "dgx-spark"]
+            }
+          }
+        }
+      }
+    }
