@@ -12,7 +12,7 @@ from this repo.
 | GitOps | None — config lives on the LXC |
 
 Use it as the operator landing page for Omni, Argo CD, kagent, Vault, and
-the OSS AI gateway LXCs.
+the AI gateways (Enterprise agentgateway on omni-viper and the OSS LXCs).
 
 ## Cards / services
 
@@ -21,6 +21,7 @@ identifiers only** — not credentials.
 
 | Card | Where / what |
 | --- | --- |
+| agentgateway Enterprise | http://172.16.10.178:30400/age/ — Solo UI (tracing + cost) on omni-viper; proxy :30800 (`/openai`, `/spark`, `/mcp/fortigate`) |
 | OSS gateway — agw-oss | LXC 140 @ `172.16.10.114` (iceman) |
 | OSS gateway — bifrost | LXC 141 @ `172.16.10.120` (iceman) |
 | OSS gateway — litellm | LXC 142 @ `172.16.10.125` (iceman) |

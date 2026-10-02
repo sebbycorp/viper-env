@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - gateway.yaml
+  - spark-llm.yaml
+  - fortigate-mcp.yaml
+  - tracing.yaml
+  - model-costs.yaml
+  - spark-costs.yaml
+  - openai-llm.yaml
+  - openai-models.yaml
+  - bedrock-gateway.yaml
+  - bedrock-models.yaml

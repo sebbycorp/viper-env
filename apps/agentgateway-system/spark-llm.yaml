@@ -1,0 +1,34 @@
+# DGX Spark (vLLM, OpenAI-compatible) via the kagent selectorless Service.
+# Model pinned to the served name so the Solo UI playground can drive it (it posts
+# to the bare /spark prefix); path forces vLLM's chat endpoint for any /spark/* call.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: spark-qwen
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      host: dgx-spark.kagent.svc.cluster.local
+      port: 8000
+      path: /v1/chat/completions
+      openai:
+        model: qwen3.8-flash-next
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: spark-qwen
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /spark
+      backendRefs:
+        - name: spark-qwen
+          group: agentgateway.dev
+          kind: AgentgatewayBackend

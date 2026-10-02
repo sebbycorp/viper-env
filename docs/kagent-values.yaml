@@ -1,0 +1,91 @@
+# kagent Enterprise Helm values (release kagent, ns kagent, rev 7) — installed by Helm, not Argo CD:
+#   helm upgrade kagent oci://us-docker.pkg.dev/solo-public/kagent-enterprise-helm/charts/kagent-enterprise \
+#     --version 1.0.0-alpha3 -n kagent -f docs/kagent-values.yaml
+# Only Secret *names* appear here; license and API-key Secrets are created out of band / via ESO.
+USER-SUPPLIED VALUES: null
+clickhouse:
+  resources:
+    limits:
+      cpu: 2
+      memory: 4Gi
+    requests:
+      cpu: 250m
+      ephemeral-storage: 50Mi
+      memory: 1Gi
+controller:
+  loglevel: debug
+  substrate:
+    ateApiEndpoint: dns:///api.ate-system.svc:443
+    atenetRouterURL: ""
+    defaultWorkerPool:
+      name: kagent-default
+      namespace: kagent
+    enabled: true
+database:
+  postgres:
+    bundled:
+      storage: 2Gi
+      storageClassName: local-path
+global:
+  cluster: omni-viper
+  istio:
+    ambient:
+      enabled: false
+  licensing:
+    createSecret: false
+    secretName: enterprise-kagent-license
+grafana-mcp:
+  enabled: false
+kagent-tools:
+  enabled: true
+oauth2-proxy:
+  enabled: false
+otel:
+  captureSensitiveContent: true
+  logging:
+    captureRawApiBodies: true
+    enabled: true
+    exporter:
+      otlp:
+        endpoint: http://solo-enterprise-telemetry-collector.kagent.svc.cluster.local:4317
+  tracing:
+    enabled: true
+    exporter:
+      otlp:
+        endpoint: http://solo-enterprise-telemetry-collector.kagent.svc.cluster.local:4317
+providers:
+  default: openAI
+  openAI:
+    apiKeySecretKey: OPENAI_API_KEY
+    apiKeySecretRef: kagent-spark-openai
+    config:
+      apiFormat: chatCompletions
+      baseUrl: http://dgx-spark.kagent.svc.cluster.local:8000/v1
+    model: qwen3.8-flash-next
+    provider: OpenAI
+substrate:
+  enabled: false
+substrateWorkerPool:
+  create: true
+  name: kagent-default
+  replicas: 2
+  sandboxClass: gvisor
+  workerImage: 127.0.0.1:5000/ate/ateom-gvisor@sha256:74ac12013eb634a7e06546f0a4a64f015ae646f5568e2910fbb6bb11051fc7eb
+telemetry:
+  enabled: true
+  products:
+    agentgateway:
+      enabled: true
+      namespace: agentgateway-system
+  selfMonitoring:
+    enabled: true
+    verbose: true
+  traces:
+    enabled: true
+    verbose: true
+ui:
+  service:
+    ports:
+      port: 8080
+      targetPort: 8080
+    type: NodePort

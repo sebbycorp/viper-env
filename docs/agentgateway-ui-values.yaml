@@ -1,0 +1,50 @@
+# Solo Enterprise UI for agentgateway (management chart 0.5.9), installed by Helm:
+#   helm upgrade -i management oci://us-docker.pkg.dev/solo-public/solo-enterprise-helm/charts/management \
+#     --version 0.5.9 -n agentgateway-system -f docs/agentgateway-ui-values.yaml
+# License Secret management-license (key: license-key) is created out of band — never commit it.
+# UI NodePort pinned to 30400 with kubectl patch after install.
+# UI Deployment strategy patched to maxSurge=0 (the node cannot fit two UI pods during a rollout).
+cluster: omni-viper
+platform:
+  multiCluster:
+    enabled: false
+istio:
+  ambient:
+    enabled: false
+products:
+  agentgateway:
+    enabled: true
+    namespace: agentgateway-system
+    features:
+      cost-management: true
+      cost-management-writes: true
+licensing:
+  createSecret: false
+  secretName: management-license
+service:
+  type: ClusterIP
+  ui:
+    type: NodePort
+clickhouse:
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+      ephemeral-storage: 50Mi
+    limits:
+      cpu: 2
+      memory: 4Gi
+ui:
+  backend:
+    resources:
+      requests: {cpu: 100m, memory: 256Mi}
+  frontend:
+    resources:
+      requests: {cpu: 50m, memory: 128Mi}
+telemetry:
+  k8sobjects:
+    resources:
+      requests: {cpu: 50m, memory: 256Mi}
+  collector:
+    resources:
+      requests: {cpu: 100m, memory: 384Mi}

@@ -1,0 +1,134 @@
+# Bigger OpenAI models, one pinned route each for the Solo UI playground
+# (see openai-llm.yaml for why playground routes pin a model). /openai still takes any model.
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: openai-gpt-4-1
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      openai:
+        model: gpt-4.1
+  policies:
+    auth:
+      secretRef:
+        name: openai-secret
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: openai-gpt-4-1
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /openai/gpt-4.1
+      backendRefs:
+        - name: openai-gpt-4-1
+          group: agentgateway.dev
+          kind: AgentgatewayBackend
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: openai-o3
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      openai:
+        model: o3
+  policies:
+    auth:
+      secretRef:
+        name: openai-secret
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: openai-o3
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /openai/o3
+      backendRefs:
+        - name: openai-o3
+          group: agentgateway.dev
+          kind: AgentgatewayBackend
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: openai-gpt-5-4
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      openai:
+        model: gpt-5.4
+  policies:
+    auth:
+      secretRef:
+        name: openai-secret
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: openai-gpt-5-4
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /openai/gpt-5.4
+      backendRefs:
+        - name: openai-gpt-5-4
+          group: agentgateway.dev
+          kind: AgentgatewayBackend
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: openai-gpt-5-5
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      openai:
+        model: gpt-5.5
+  policies:
+    auth:
+      secretRef:
+        name: openai-secret
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: openai-gpt-5-5
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /openai/gpt-5.5
+      backendRefs:
+        - name: openai-gpt-5-5
+          group: agentgateway.dev
+          kind: AgentgatewayBackend

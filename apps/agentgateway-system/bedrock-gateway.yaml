@@ -1,0 +1,62 @@
+# Dedicated Enterprise agentgateway proxy for AWS Bedrock, on NodePort 30801.
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayParameters
+metadata:
+  name: bedrock-proxy
+  namespace: agentgateway-system
+spec:
+  service:
+    spec:
+      type: NodePort
+      ports:
+        - name: http
+          port: 8080
+          nodePort: 30801
+  modelCatalog:
+    sources:
+      - configMap:
+          name: model-costs
+          key: catalog.json
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: bedrock-proxy
+  namespace: agentgateway-system
+spec:
+  gatewayClassName: enterprise-agentgateway
+  infrastructure:
+    parametersRef:
+      group: enterpriseagentgateway.solo.io
+      kind: EnterpriseAgentgatewayParameters
+      name: bedrock-proxy
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 8080
+      allowedRoutes:
+        namespaces:
+          from: All
+---
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: bedrock-tracing
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: bedrock-proxy
+  frontend:
+    tracing:
+      backendRef:
+        name: solo-enterprise-telemetry-collector
+        namespace: agentgateway-system
+        kind: Service
+        port: 4317
+      randomSampling: "true"
