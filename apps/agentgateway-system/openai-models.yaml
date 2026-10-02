@@ -24,6 +24,8 @@ metadata:
 spec:
   parentRefs:
     - name: agentgateway-proxy
+      group: gateway.networking.k8s.io
+      kind: Gateway
   rules:
     - matches:
         - path:
@@ -33,6 +35,7 @@ spec:
         - name: openai-gpt-4-1
           group: agentgateway.dev
           kind: AgentgatewayBackend
+          weight: 1
 ---
 apiVersion: agentgateway.dev/v1alpha1
 kind: AgentgatewayBackend
@@ -57,6 +60,8 @@ metadata:
 spec:
   parentRefs:
     - name: agentgateway-proxy
+      group: gateway.networking.k8s.io
+      kind: Gateway
   rules:
     - matches:
         - path:
@@ -66,6 +71,7 @@ spec:
         - name: openai-o3
           group: agentgateway.dev
           kind: AgentgatewayBackend
+          weight: 1
 ---
 apiVersion: agentgateway.dev/v1alpha1
 kind: AgentgatewayBackend
@@ -90,6 +96,8 @@ metadata:
 spec:
   parentRefs:
     - name: agentgateway-proxy
+      group: gateway.networking.k8s.io
+      kind: Gateway
   rules:
     - matches:
         - path:
@@ -99,6 +107,7 @@ spec:
         - name: openai-gpt-5-4
           group: agentgateway.dev
           kind: AgentgatewayBackend
+          weight: 1
 ---
 apiVersion: agentgateway.dev/v1alpha1
 kind: AgentgatewayBackend
@@ -123,6 +132,8 @@ metadata:
 spec:
   parentRefs:
     - name: agentgateway-proxy
+      group: gateway.networking.k8s.io
+      kind: Gateway
   rules:
     - matches:
         - path:
@@ -132,3 +143,4 @@ spec:
         - name: openai-gpt-5-5
           group: agentgateway.dev
           kind: AgentgatewayBackend
+          weight: 1

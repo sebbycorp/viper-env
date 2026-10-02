@@ -22,6 +22,8 @@ metadata:
 spec:
   parentRefs:
     - name: agentgateway-proxy
+      group: gateway.networking.k8s.io
+      kind: Gateway
   rules:
     - matches:
         - path:
@@ -31,6 +33,7 @@ spec:
         - name: openai
           group: agentgateway.dev
           kind: AgentgatewayBackend
+          weight: 1
 ---
 # Playground route. The Solo UI playground only drives AI backends that pin a
 # model (it shows it read-only and posts to the bare route prefix). A pinned model
@@ -58,6 +61,8 @@ metadata:
 spec:
   parentRefs:
     - name: agentgateway-proxy
+      group: gateway.networking.k8s.io
+      kind: Gateway
   rules:
     - matches:
         - path:
@@ -67,3 +72,4 @@ spec:
         - name: openai-gpt-4o-mini
           group: agentgateway.dev
           kind: AgentgatewayBackend
+          weight: 1
