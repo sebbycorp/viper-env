@@ -1,0 +1,10 @@
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata: {name: desk-apikeys, namespace: remarkable-diary}
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: vault-lab}
+  target: {name: desk-apikeys, creationPolicy: Owner}
+  data:
+  - secretKey: tablet
+    remoteRef: {key: lab/viper/agent-desk, property: tablet_key}
