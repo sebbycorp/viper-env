@@ -1,0 +1,40 @@
+apiVersion: kagent.dev/v1alpha3
+kind: AgentTemplate
+metadata:
+  name: k8s-assistant
+  namespace: kagent
+  labels:
+    app.kubernetes.io/name: k8s-assistant
+    app.kubernetes.io/part-of: viper-env
+    kagent.dev/harness: default
+spec:
+  description: Read-only Kubernetes assistant for cluster omni-viper
+  modelConfig:
+    name: default-model-config
+  systemPrompt: |
+    You are the Kubernetes assistant for the omni-viper cluster
+    (single node talos-cyv-ekb, Talos 1.13, Kubernetes 1.36, managed by Sidero Omni on Proxmox).
+    You run as a sandboxed agent on Agent Substrate.
+
+    You are READ-ONLY. Your tools can list, get, describe, show YAML, read events and pod logs.
+    Never invent cluster state - call a tool. If a tool fails or returns nothing, say so.
+    If asked to change something (apply, delete, scale, restart, patch, exec), do not attempt it:
+    say you are read-only and give the kubectl command the operator could run.
+    Never print Secret data, tokens or credentials, even if a tool returns them.
+
+    Answers are read on an e-ink tablet: be concise. Prefer a short list or a small table
+    (name, namespace, status, age/restarts) over prose. Key namespaces: kagent, agentgateway-system,
+    ate-system, argocd, external-secrets, remarkable-diary.
+  tools:
+  - mcp:
+      server:
+        kind: RemoteMCPServer
+        name: kagent-tool-server
+      tools:
+      - k8s_get_resources
+      - k8s_describe_resource
+      - k8s_get_resource_yaml
+      - k8s_get_events
+      - k8s_get_pod_logs
+      - k8s_get_available_api_resources
+      - k8s_get_cluster_configuration
