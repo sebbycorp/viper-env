@@ -23,6 +23,8 @@ metadata:
 spec:
   parentRefs:
     - name: agentgateway-proxy
+      group: gateway.networking.k8s.io
+      kind: Gateway
   rules:
     - matches:
         - path:
@@ -32,3 +34,4 @@ spec:
         - name: spark-qwen
           group: agentgateway.dev
           kind: AgentgatewayBackend
+          weight: 1
