@@ -11,6 +11,10 @@ data:
       "providers": {
         "openai": {
           "models": {
+            "qwen3.8-flash-next": {
+              "rates": { "input": "0.10", "output": "0.10", "reasoning": "0.10", "cacheRead": "0.10" },
+              "tags": ["self-hosted", "dgx-spark"]
+            },
             "Mia-AiLab/Qwen3.8-Flash-Next-NVFP4": {
               "rates": { "input": "0.10", "output": "0.10", "reasoning": "0.10", "cacheRead": "0.10" },
               "tags": ["self-hosted", "dgx-spark"]

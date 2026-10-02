@@ -1,6 +1,6 @@
 # DGX Spark (vLLM, OpenAI-compatible) via the kagent selectorless Service.
-# No model is pinned: the client's "model" passes through, so swapping the model
-# served on the Spark needs no gateway change (only a spark-costs.yaml entry).
+# Model pinned to the served name so the Solo UI playground can drive it (it posts
+# to the bare /spark prefix); path forces vLLM's chat endpoint for any /spark/* call.
 apiVersion: agentgateway.dev/v1alpha1
 kind: AgentgatewayBackend
 metadata:
@@ -11,7 +11,9 @@ spec:
     provider:
       host: dgx-spark.kagent.svc.cluster.local
       port: 8000
-      openai: {}
+      path: /v1/chat/completions
+      openai:
+        model: qwen3.8-flash-next
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -26,12 +28,6 @@ spec:
         - path:
             type: PathPrefix
             value: /spark
-      filters:
-        - type: URLRewrite
-          urlRewrite:
-            path:
-              type: ReplacePrefixMatch
-              replacePrefixMatch: /
       backendRefs:
         - name: spark-qwen
           group: agentgateway.dev
