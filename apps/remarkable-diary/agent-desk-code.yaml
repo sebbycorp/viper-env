@@ -1,0 +1,401 @@
+apiVersion: v1
+data:
+  llm.py: |
+    # llm.py — call gpt-5.5 through agentgateway with a strict json_schema response.
+    import os, json, httpx
+    from renderspec import SCHEMA, coercion_messages, safe_spec
+
+    GW_URL = os.environ.get("GW_URL",
+        "http://agentgateway-proxy.agentgateway-system.svc.cluster.local:8080/openai/v1/chat/completions")
+    MODEL = os.environ.get("MODEL", "gpt-5.5")
+
+    async def coerce_to_spec(fmt: str, query: str, agent_payload: str) -> dict:
+        body = {"model": MODEL, "messages": coercion_messages(fmt, query, agent_payload),
+                "response_format": {"type": "json_schema", "json_schema": SCHEMA}}
+        async with httpx.AsyncClient(timeout=30.0) as c:
+            r = await c.post(GW_URL, json=body)
+            r.raise_for_status()
+            content = r.json()["choices"][0]["message"]["content"]
+        try:
+            return safe_spec(json.loads(content), fmt)
+        except Exception:
+            return safe_spec(content, fmt)
+
+
+    async def coerce_async(text: str, fmt: str, query: str = "") -> dict:
+        """Coerce an agent answer into a render-spec."""
+        return await coerce_to_spec(fmt, query, text)
+  parse.py: |
+    import re
+    from dataclasses import dataclass
+    from typing import Optional
+
+    AGENTS = {"forti": "table", "k8s": "auto"}          # default format per agent
+    FORMATS = {"table", "stats", "json", "text", "markmap"}
+    _ALIASES = {"fortigate": "forti", "forti": "forti", "kubernetes": "k8s", "kube": "k8s", "k8s": "k8s"}
+    _TAG = re.compile(r"^\s*@\s*([A-Za-z0-9][\w-]*)\s*:?\s*", re.IGNORECASE)
+    _FMT = re.compile(r"^(table|stats|json|text|markmap|mindmap|map)\s*:\s*", re.IGNORECASE)
+
+    @dataclass
+    class ParsedAsk:
+        agent: Optional[str]          # "forti" | "k8s" | None (unknown tag)
+        fmt: str
+        query: str
+        unknown: Optional[str] = None # the tag as written, when not a known agent
+
+    def parse_ask(text: str) -> Optional[ParsedAsk]:
+        m = _TAG.match(text or "")
+        if not m:
+            return None
+        tag = m.group(1).lower()
+        rest = text[m.end():].strip()
+        agent = _ALIASES.get(tag)
+        if agent is None:
+            return ParsedAsk(agent=None, fmt="text", query=rest, unknown=tag)
+        fmt = AGENTS[agent]
+        f = _FMT.match(rest)
+        if f:
+            word = f.group(1).lower()
+            fmt = "markmap" if word in ("markmap", "mindmap", "map") else word
+            rest = rest[f.end():].strip()
+        return ParsedAsk(agent=agent, fmt=fmt, query=rest)
+  renderspec.py: |
+    # renderspec.py — the render-spec schema, the coercion prompt, and safe fallbacks.
+
+    SCHEMA = {
+        "name": "render_spec",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "title", "columns", "rows", "tiles", "text", "md", "note"],
+            "properties": {
+                "kind": {"type": "string", "enum": ["table", "stats", "json", "text", "markmap"]},
+                "title": {"type": "string"},
+                "columns": {"type": "array", "items": {"type": "string"}},
+                "rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
+                "tiles": {"type": "array", "items": {
+                    "type": "object", "additionalProperties": False,
+                    "required": ["label", "value"],
+                    "properties": {"label": {"type": "string"}, "value": {"type": "string"}}}},
+                "text": {"type": "string"},
+                "md": {"type": "string"},
+                "note": {"type": "string"},
+            },
+        },
+    }
+
+    _SYS = (
+        "You convert an infrastructure agent's answer into a compact render-spec for a "
+        "small e-ink tablet. Return ONLY an object matching the schema. Rules:\n"
+        "- kind=table: fill columns + rows (rows are arrays of short strings, same length as columns). "
+        "Keep to <=6 columns and <=15 rows; abbreviate long values.\n"
+        "- kind=stats: fill tiles (label + short value), <=8 tiles. Good for health/counters.\n"
+        "- kind=json: put a compact pretty-printed JSON string in text.\n"
+        "- kind=text: put a short prose answer in text (<=6 lines).\n"
+        "- kind=markmap: put a markdown OUTLINE in md — one # root, nested ## / - bullets, "
+        "3-4 levels, short labels. Good for mind maps, hierarchies, or 'map out X'.\n"
+        "Always set title (<=40 chars) and note (data source, <=40 chars). "
+        "Leave unused fields as empty arrays/strings."
+    )
+
+    def coercion_messages(fmt: str, query: str, agent_payload: str):
+        if fmt == "markmap":
+            pref = ("Format: markmap — return kind=markmap with a markdown outline in md "
+                    "(# root, nested ## / - bullets). Use it to map out the answer as a hierarchy.")
+        elif fmt == "auto":
+            pref = ("No fixed format — pick the best of table/stats/json/text/markmap for this data "
+                    "(lists of resources -> table; health/counters -> stats; a hierarchy or "
+                    "'map out' -> markmap; diagnoses -> text).")
+        else:
+            pref = (f"Preferred format: {fmt}. If the data does not fit that format, pick the best of "
+                    f"table/stats/json/text/markmap.")
+        user = f"{pref}\nUser question: {query}\n\nAgent output:\n{agent_payload}"
+        return [{"role": "system", "content": _SYS}, {"role": "user", "content": user}]
+
+    _EMPTY = {"kind": "text", "title": "", "columns": [], "rows": [], "tiles": [], "text": "", "md": "", "note": ""}
+
+    def _base():
+        return dict(_EMPTY)
+
+    def safe_spec(obj, fmt: str):
+        """Never raise. Return a valid render-spec, degrading to text on anything odd."""
+        if not isinstance(obj, dict):
+            s = _base(); s["text"] = str(obj); return s
+        kind = obj.get("kind")
+        if kind not in ("table", "stats", "json", "text", "markmap"):
+            s = _base(); s["text"] = obj.get("text") or str(obj); s["title"] = str(obj.get("title", "")); return s
+        s = _base()
+        s["kind"] = kind
+        s["title"] = str(obj.get("title", ""))
+        s["note"] = str(obj.get("note", ""))
+        if kind == "markmap":
+            s["md"] = str(obj.get("md", ""))
+            if not s["md"].strip():          # empty outline -> degrade to prose
+                s["kind"] = "text"; s["text"] = str(obj.get("text", ""))
+        elif kind == "table":
+            cols = obj.get("columns")
+            s["columns"] = [str(c) for c in cols] if isinstance(cols, list) else []
+            rows = obj.get("rows")
+            s["rows"] = ([[str(c) for c in row] for row in rows if isinstance(row, list)]
+                         if isinstance(rows, list) else [])
+        elif kind == "stats":
+            tiles = obj.get("tiles")
+            s["tiles"] = ([{"label": str(t.get("label", "")), "value": str(t.get("value", ""))}
+                           for t in tiles if isinstance(t, dict)]
+                          if isinstance(tiles, list) else [])
+        else:  # json | text
+            s["text"] = str(obj.get("text", ""))
+        return s
+
+    def error_spec(agent: str, msg: str):
+        s = _base()
+        s["title"] = f"{agent} agent"
+        s["text"] = f"The {agent} agent {msg}."
+        return s
+  requirements.txt: |
+    fastapi==0.115.0
+    uvicorn==0.30.6
+    httpx==0.27.2
+    pydantic==2.9.2
+  server.py: |
+    # server.py — /ask router: @k8s / @forti -> Agent Substrate AgentTemplates -> render-spec.
+    import asyncio, os, time
+    import httpx
+    from fastapi import FastAPI
+    from pydantic import BaseModel
+    from parse import parse_ask
+    from renderspec import error_spec, safe_spec
+    import llm
+    from substrate import SubstrateClient
+
+    def _pairs(s): return dict(p.split("=", 1) for p in s.split(",") if "=" in p)
+    TEMPLATES = _pairs(os.environ.get("AGENT_TEMPLATES", "k8s=k8s-assistant,forti=fortigate"))
+    NAMES = {"k8s": "k8s", "forti": "fortigate"}
+    AGENT_TIMEOUT = 90.0            # wall-clock bound per agent call (httpx timeouts are per read)
+    SESSION_TTL = float(os.environ.get("SESSION_TTL", "900"))
+    _client = SubstrateClient(os.environ.get("SUBSTRATE_URL", "http://kagent-controller.kagent.svc:8085"),
+                              cluster=os.environ.get("SUBSTRATE_CLUSTER", "omni-viper"))
+    substrate_ask = _client.ask          # patched in tests
+
+    async def coerce(text, fmt, query=""):   # patched in tests (may be sync there)
+        return await llm.coerce_async(text, fmt, query)
+
+    _SESSIONS: dict = {}                 # agent -> (session, last_ts)
+    _LOCKS: dict = {}                    # agent -> (loop, asyncio.Lock) (an instance runs one task at a time)
+
+    def _lock(agent):
+        loop = asyncio.get_running_loop()
+        cur = _LOCKS.get(agent)
+        if cur is None or cur[0] is not loop:      # asyncio.Lock binds to a loop (py3.9)
+            cur = _LOCKS[agent] = (loop, asyncio.Lock())
+        return cur[1]
+
+    def _text(t):
+        return {"kind": "text", "title": "", "columns": [], "rows": [], "tiles": [], "text": t, "md": "", "note": ""}
+
+    async def _call(agent, query):
+        sess, ts = _SESSIONS.get(agent, ("", 0))
+        if time.time() - ts > SESSION_TTL: sess = ""
+        try:
+            ans, new = await asyncio.wait_for(
+                substrate_ask(TEMPLATES[agent], query, timeout=AGENT_TIMEOUT, session=sess), AGENT_TIMEOUT)
+        except (httpx.TimeoutException, asyncio.TimeoutError):
+            raise
+        except Exception:
+            if not sess: raise
+            # broken/stale instance: replace it once with a fresh one
+            ans, new = await asyncio.wait_for(
+                substrate_ask(TEMPLATES[agent], query, timeout=AGENT_TIMEOUT, session=""), AGENT_TIMEOUT)
+        _SESSIONS[agent] = (new, time.time())
+        return ans
+
+    async def handle(text):
+        p = parse_ask(text)
+        if p is None: return _text("Start with @k8s or @forti to ask an agent.")
+        if p.agent is None: return _text(f"No @{p.unknown} agent on this cluster.")
+        name = NAMES[p.agent]
+        async with _lock(p.agent):
+            try:
+                ans = await _call(p.agent, p.query)
+            except (httpx.TimeoutException, asyncio.TimeoutError):
+                return error_spec(name, "took too long")
+            except Exception:
+                return error_spec(name, "returned an error")
+        if not ans: return error_spec(name, "returned nothing")
+        try:
+            r = coerce(ans, p.fmt, p.query)
+            spec = await r if asyncio.iscoroutine(r) else r
+        except Exception:
+            spec = None
+        return safe_spec(spec, p.fmt) if spec else safe_spec({"kind": "text", "text": ans}, "text")
+
+    class Ask(BaseModel):
+        text: str = ""
+
+    app = FastAPI()
+
+    @app.post("/ask")
+    async def ask(a: Ask): return await handle(a.text)
+
+    @app.post("/ping")
+    async def ping(): return {"ok": True}
+
+    @app.get("/healthz")
+    async def healthz(): return {"ok": True}
+  substrate.py: |
+    # substrate.py — client for kagent AgentTemplates running on Agent Substrate (ATE).
+    # No per-agent URL exists: create an AgentInstance, then stream lf.a2a.v1 SendStreamingMessage
+    # (gRPC-web, protobuf) with header x-kagent-agent-instance-id. See DISCOVERY / substrate notes.
+    # Reached through the kagent-ui nginx (NodePort) which proxies /autoauth and /api to the controller :8085.
+    import struct, uuid
+    import httpx
+
+    def _vl(n):
+        o = b""
+        while True:
+            b = n & 0x7F; n >>= 7
+            if n: o += bytes([b | 0x80])
+            else: return o + bytes([b])
+
+    def ld(f, b):
+        b = b.encode() if isinstance(b, str) else b
+        return _vl(f << 3 | 2) + _vl(len(b)) + b
+
+    def vi(f, n): return _vl(f << 3) + _vl(n)
+    def frame(b): return b"\x00" + struct.pack(">I", len(b)) + b
+
+    def _rv(b, i):
+        v = s = 0
+        while True:
+            c = b[i]; i += 1; v |= (c & 0x7F) << s; s += 7
+            if not c & 0x80: return v, i
+
+    def rd(b):
+        """Decode one protobuf message level into [(field, value)]; raises ValueError on garbage."""
+        i = 0; out = []
+        while i < len(b):
+            k, i = _rv(b, i); f, w = k >> 3, k & 7
+            if w == 0: v, i = _rv(b, i)
+            elif w == 2:
+                n, i = _rv(b, i); v = b[i:i + n]; i += n
+            elif w == 1: v = b[i:i + 8]; i += 8
+            elif w == 5: v = b[i:i + 4]; i += 4
+            else: raise ValueError(f"wire type {w}")
+            out.append((f, v))
+        return out
+
+    def get(fs, f): return [v for k, v in fs if k == f]
+
+    def build_create_req(ns: str, harness: str, template: str, request_id: str = "", name: str = "agent-desk") -> bytes:
+        ref = lambda n: ld(1, ns) + ld(2, n)
+        return ld(1, ref(harness)) + ld(2, ref(template)) + ld(3, request_id or str(uuid.uuid4())) + ld(4, name)
+
+    def build_send_req(context_id: str, text: str, message_id: str = "") -> bytes:
+        m = ld(1, message_id or uuid.uuid4().hex) + ld(2, context_id) + vi(4, 1) + ld(5, ld(1, text))
+        return ld(2, m)
+
+    def parse_instance(payload: bytes):
+        """CreateAgentInstanceResponse payload -> (instance_id, context_id)."""
+        inst = rd(get(rd(payload), 1)[0])
+        return get(inst, 1)[0].decode(), get(inst, 14)[0].decode()
+
+    def artifact_text(payload: bytes):
+        """One StreamResponse payload -> (text, last_chunk). text '' for non-text events."""
+        for f, v in rd(payload):
+            if f != 4: continue                              # artifactUpdate only
+            ev = rd(v)
+            art = rd(get(ev, 3)[0]) if get(ev, 3) else []
+            txt = ""
+            for part in get(art, 4):
+                try: txt += "".join(t.decode() for t in get(rd(part), 1) if isinstance(t, bytes))
+                except (ValueError, UnicodeDecodeError, IndexError): pass   # tool/data parts
+            return txt, bool(get(ev, 5) and get(ev, 5)[0])
+        return "", False
+
+    class FrameReader:
+        """Incremental grpc-web frame splitter. feed(bytes) -> list of (is_trailer, payload)."""
+        def __init__(self): self.buf = b""
+        def feed(self, data: bytes):
+            self.buf += data; out = []
+            while len(self.buf) >= 5:
+                n = struct.unpack(">I", self.buf[1:5])[0]
+                if len(self.buf) < 5 + n: break
+                out.append((bool(self.buf[0] & 0x80), self.buf[5:5 + n])); self.buf = self.buf[5 + n:]
+            return out
+
+    class AnswerAccumulator:
+        def __init__(self): self.final = None; self.chunks = []
+        def add(self, payload: bytes):
+            txt, last = artifact_text(payload)
+            if not txt: return
+            if last: self.final = txt
+            else: self.chunks.append(txt)
+        def text(self) -> str:
+            return (self.final if self.final is not None else "".join(self.chunks)).strip()
+
+    class Unauthorized(Exception):
+        pass
+
+
+    class SubstrateClient:
+        """base: e.g. http://172.16.10.178:30500 (kagent-ui) or http://kagent-controller.kagent.svc:8085."""
+        def __init__(self, base, cluster="omni-viper", ns="kagent", harness="default"):
+            self.base = base.rstrip("/"); self.cluster = cluster; self.ns = ns; self.harness = harness
+            self._tok = None; self._tok_ts = 0.0
+
+        def _api(self, method): return f"{self.base}/api/proxy/cluster/{self.cluster}/api/{method}"
+
+        async def _token(self, c, force=False):
+            import time
+            if self._tok and not force and time.time() - self._tok_ts < 3600: return self._tok
+            r = await c.post(self.base + "/autoauth/token", json={"user_type": "admin"})
+            r.raise_for_status(); self._tok = r.json()["access_token"]; self._tok_ts = time.time()
+            return self._tok
+
+        async def _call(self, c, method, body, extra_headers=None):
+            h = {"Authorization": "Bearer " + await self._token(c), "content-type": "application/grpc-web+proto",
+                 "x-grpc-web": "1"}; h.update(extra_headers or {})
+            fr, acc = FrameReader(), []
+            async with c.stream("POST", self._api(method), content=frame(body), headers=h) as r:
+                if r.status_code == 401: raise Unauthorized()
+                r.raise_for_status()
+                st = r.headers.get("grpc-status")
+                if st == "16": raise Unauthorized()
+                if st not in (None, "0"): raise RuntimeError(f"grpc {st}: {r.headers.get('grpc-message')}")
+                async for chunk in r.aiter_bytes():
+                    for trailer, p in fr.feed(chunk):
+                        if trailer:
+                            if b"grpc-status: 16" in p: raise Unauthorized()
+                            if b"grpc-status: 0" not in p: raise RuntimeError(p.decode(errors="replace").strip())
+                        else: acc.append(p)
+            return acc
+
+        async def _call_authed(self, c, method, body, extra_headers=None):
+            """_call, refreshing the token and retrying once on 401 / UNAUTHENTICATED."""
+            try:
+                return await self._call(c, method, body, extra_headers)
+            except Unauthorized:
+                await self._token(c, force=True)
+                return await self._call(c, method, body, extra_headers)
+
+        async def create_instance(self, c, template):
+            frames = await self._call_authed(c, "kagent.api.v1alpha1.AgentInstanceService/CreateAgentInstance",
+                                      build_create_req(self.ns, self.harness, template))
+            return parse_instance(frames[0])
+
+        async def ask(self, template, text, *, timeout=90.0, session=""):
+            """Returns (answer, session). session = 'instanceId|contextId'; pass it back for follow-ups."""
+            async with httpx.AsyncClient(timeout=timeout) as c:
+                iid, _, ctx = session.partition("|")
+                if not (iid and ctx):
+                    iid, ctx = await self.create_instance(c, template)
+                acc = AnswerAccumulator()
+                for p in await self._call_authed(c, "lf.a2a.v1.A2AService/SendStreamingMessage", build_send_req(ctx, text),
+                                          {"x-kagent-agent-instance-id": iid}):
+                    acc.add(p)
+                return acc.text(), f"{iid}|{ctx}"
+kind: ConfigMap
+metadata:
+  name: agent-desk-code
+  namespace: remarkable-diary

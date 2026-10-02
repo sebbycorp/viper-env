@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: agent-desk, namespace: remarkable-diary, labels: {app: agent-desk}}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: agent-desk}}
+  template:
+    metadata:
+      labels: {app: agent-desk}
+      annotations: {code-rev: "7269b80"}   # bump to roll the pod when the ConfigMap changes
+    spec:
+      containers:
+      - name: agent-desk
+        image: python:3.11-slim
+        command: ["/bin/bash", "-c"]
+        args: ["pip install -q -r /cfg/requirements.txt && cd /cfg && exec uvicorn server:app --host 0.0.0.0 --port 8000"]
+        env:
+        - {name: SUBSTRATE_URL, value: "http://kagent-controller.kagent.svc:8085"}
+        - {name: SUBSTRATE_CLUSTER, value: "omni-viper"}
+        - {name: AGENT_TEMPLATES, value: "k8s=k8s-assistant,forti=fortigate"}
+        - {name: GW_URL, value: "http://agentgateway-proxy.agentgateway-system.svc.cluster.local:8080/openai/v1/chat/completions"}
+        - {name: MODEL, value: "gpt-5.5"}
+        - {name: SESSION_TTL, value: "900"}
+        ports: [{containerPort: 8000}]
+        readinessProbe: {httpGet: {path: /healthz, port: 8000}, initialDelaySeconds: 20, periodSeconds: 5}
+        resources: {requests: {cpu: 50m, memory: 192Mi}, limits: {cpu: "1", memory: 512Mi}}
+        volumeMounts: [{name: code, mountPath: /cfg}]
+      volumes: [{name: code, configMap: {name: agent-desk-code}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: agent-desk, namespace: remarkable-diary}
+spec:
+  type: ClusterIP
+  selector: {app: agent-desk}
+  ports: [{name: http, port: 8080, targetPort: 8000}]
