@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: homelab-router, namespace: tailscale}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: homelab-router}}
+  template:
+    metadata: {labels: {app: homelab-router}}
+    spec:
+      serviceAccountName: homelab-router
+      containers:
+      - name: tailscale
+        image: ghcr.io/tailscale/tailscale:v1.102.4
+        env:
+        - {name: TS_USERSPACE, value: "true"}
+        - {name: TS_KUBE_SECRET, value: tailscale-state}
+        - {name: TS_HOSTNAME, value: homelab-router}
+        - {name: TS_ROUTES, value: "172.16.10.178/32,172.16.10.114/32"}
+        - {name: TS_EXTRA_ARGS, value: "--advertise-tags=tag:homelab-router"}
+        - name: TS_AUTHKEY
+          valueFrom:
+            secretKeyRef: {name: tailscale-authkey, key: authkey}
+        resources:
+          requests: {cpu: 20m, memory: 64Mi}
+          limits: {memory: 256Mi}
+        securityContext:
+          allowPrivilegeEscalation: false
+          seccompProfile: {type: RuntimeDefault}
+          capabilities: {drop: [ALL]}
