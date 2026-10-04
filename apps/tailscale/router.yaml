@@ -26,4 +26,5 @@ spec:
           limits: {memory: 256Mi}
         securityContext:
           allowPrivilegeEscalation: false
+          seccompProfile: {type: RuntimeDefault}
           capabilities: {drop: [ALL]}
