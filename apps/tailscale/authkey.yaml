@@ -1,0 +1,10 @@
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata: {name: tailscale-authkey, namespace: tailscale}
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: vault-lab}
+  target: {name: tailscale-authkey, creationPolicy: Owner}
+  data:
+  - secretKey: authkey
+    remoteRef: {key: lab/viper/tailscale, property: authkey}
