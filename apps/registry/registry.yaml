@@ -1,0 +1,41 @@
+# Node-local image registry. Pods pull from 127.0.0.1:5000 (hostNetwork); pushes from
+# the LAN go to NodePort 30555. Adopted from the hand-applied original (2026-09-16).
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: registry, namespace: registry}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}          # hostPort 5000: two pods can't run at once
+  selector: {matchLabels: {app: registry}}
+  template:
+    metadata: {labels: {app: registry}}
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+      - name: registry
+        image: registry:2
+        ports: [{containerPort: 5000, hostPort: 5000}]
+        env:
+        - {name: REGISTRY_STORAGE_DELETE_ENABLED, value: "true"}
+        resources:
+          requests: {cpu: 10m, memory: 32Mi}
+          limits: {memory: 256Mi}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities: {drop: [ALL]}
+          runAsNonRoot: true
+          runAsUser: 1000
+          seccompProfile: {type: RuntimeDefault}
+        volumeMounts: [{name: data, mountPath: /var/lib/registry}]
+      volumes:
+      - name: data
+        persistentVolumeClaim: {claimName: registry-data}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: registry, namespace: registry}
+spec:
+  type: NodePort
+  selector: {app: registry}
+  ports: [{port: 5000, targetPort: 5000, nodePort: 30555}]
