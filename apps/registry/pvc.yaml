@@ -1,0 +1,9 @@
+# Images survive pod restarts and node reboots (was an emptyDir: a restart wiped
+# fortigate-mcp:dev and the ATE images).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: registry-data, namespace: registry}
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources: {requests: {storage: 20Gi}}
