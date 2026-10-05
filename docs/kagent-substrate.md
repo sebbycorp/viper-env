@@ -72,8 +72,8 @@ CPU, so the extra pool fits on the CPU-bound node; the PriorityClass only
 decides eviction order and never preempts other pods.
 
 The coding tier uses the `codex` Harness runtime
-(`ghcr.io/kagent-dev/kagent/codex-harness`, tag matching the running
-`golang-adk` build). Codex speaks the OpenAI Responses API, so ModelConfig
+(`ghcr.io/kagent-dev/kagent/codex-harness:1.0.0-alpha3`, matching the
+Enterprise controller; older builds fail on `unknown field "runtime_telemetry"`). Codex speaks the OpenAI Responses API, so ModelConfig
 `codex-gpt-5-4` uses `apiFormat: responses` and calls the in-cluster
 agentgateway over HTTP (`/openai/v1`). The beta4 egress can't do HTTPS to
 api.openai.com. The `/openai` backend has `policies.ai.routes` so
