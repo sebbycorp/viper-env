@@ -1,5 +1,6 @@
 # Dedicated workers for coding sessions (Codex harness), so long coding turns
-# never hold the shared kagent-default workers.
+# never hold the shared kagent-default workers. Two workers: a Harness image
+# change prepares the new golden snapshot while the old revision still holds one.
 apiVersion: ate.dev/v1alpha1
 kind: WorkerPool
 metadata:
@@ -10,7 +11,7 @@ metadata:
     kagent.dev/worker-pool: kagent-coding
     substrate.viper-env/tier: coding
 spec:
-  replicas: 1
+  replicas: 2
   sandboxClass: gvisor
   workerImage: 127.0.0.1:5000/ate/ateom-gvisor@sha256:74ac12013eb634a7e06546f0a4a64f015ae646f5568e2910fbb6bb11051fc7eb
   template:
