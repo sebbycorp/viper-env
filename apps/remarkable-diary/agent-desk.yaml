@@ -7,7 +7,7 @@ spec:
   template:
     metadata:
       labels: {app: agent-desk}
-      annotations: {code-rev: "7269b80"}   # bump to roll the pod when the ConfigMap changes
+      annotations: {code-rev: "k8sp-code-1"}   # bump to roll the pod when the ConfigMap changes
     spec:
       containers:
       - name: agent-desk
@@ -17,7 +17,7 @@ spec:
         env:
         - {name: SUBSTRATE_URL, value: "http://kagent-controller.kagent.svc:8085"}
         - {name: SUBSTRATE_CLUSTER, value: "omni-viper"}
-        - {name: AGENT_TEMPLATES, value: "k8s=k8s-assistant,forti=fortigate"}
+        - {name: AGENT_TEMPLATES, value: "k8s=k8s-assistant,k8sp=k8s-assistant-priority,forti=fortigate,code=codex-coder"}
         - {name: GW_URL, value: "http://agentgateway-proxy.agentgateway-system.svc.cluster.local:8080/openai/v1/chat/completions"}
         - {name: MODEL, value: "gpt-5.5"}
         - {name: SESSION_TTL, value: "900"}
