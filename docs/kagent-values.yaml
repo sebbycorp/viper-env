@@ -68,7 +68,7 @@ substrate:
 substrateWorkerPool:
   create: true
   name: kagent-default
-  replicas: 2
+  replicas: 3
   sandboxClass: gvisor
   workerImage: 127.0.0.1:5000/ate/ateom-gvisor@sha256:74ac12013eb634a7e06546f0a4a64f015ae646f5568e2910fbb6bb11051fc7eb
 telemetry:
