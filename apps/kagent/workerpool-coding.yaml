@@ -1,0 +1,18 @@
+# Dedicated workers for coding sessions (Codex harness), so long coding turns
+# never hold the shared kagent-default workers.
+apiVersion: ate.dev/v1alpha1
+kind: WorkerPool
+metadata:
+  name: kagent-coding
+  namespace: kagent
+  labels:
+    app.kubernetes.io/part-of: viper-env
+    kagent.dev/worker-pool: kagent-coding
+    substrate.viper-env/tier: coding
+spec:
+  replicas: 1
+  sandboxClass: gvisor
+  workerImage: 127.0.0.1:5000/ate/ateom-gvisor@sha256:74ac12013eb634a7e06546f0a4a64f015ae646f5568e2910fbb6bb11051fc7eb
+  template:
+    labels:
+      substrate.viper-env/tier: coding
