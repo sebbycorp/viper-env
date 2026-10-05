@@ -175,7 +175,7 @@ data:
 
     def _pairs(s): return dict(p.split("=", 1) for p in s.split(",") if "=" in p)
     TEMPLATES = _pairs(os.environ.get("AGENT_TEMPLATES",
-                                      "k8s=k8s-assistant,k8sp=k8s-assistant-priority,forti=fortigate,code=codex-coder"))
+                                      "k8s=k8s-assistant,k8sp=k8s-assistant-priority@high,forti=fortigate,code=codex-coder@coding"))
     NAMES = {"k8s": "k8s", "k8sp": "k8s-priority", "forti": "fortigate", "code": "codex"}
     AGENT_TIMEOUT = 90.0            # wall-clock bound per agent call (httpx timeouts are per read)
     SESSION_TTL = float(os.environ.get("SESSION_TTL", "900"))
@@ -385,8 +385,10 @@ data:
                 return await self._call(c, method, body, extra_headers)
 
         async def create_instance(self, c, template):
+            # "name@harness" picks a non-default Harness (e.g. high, coding tiers).
+            name, _, harness = template.partition("@")
             frames = await self._call_authed(c, "kagent.api.v1alpha1.AgentInstanceService/CreateAgentInstance",
-                                      build_create_req(self.ns, self.harness, template))
+                                      build_create_req(self.ns, harness or self.harness, name))
             return parse_instance(frames[0])
 
         async def ask(self, template, text, *, timeout=90.0, session=""):
