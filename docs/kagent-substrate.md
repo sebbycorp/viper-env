@@ -63,7 +63,7 @@ WorkerPool. Manifests: [apps/kagent](../apps/kagent/) (Argo CD app
 | --- | --- | --- | --- | --- | --- |
 | High | `high` | `kagent-high` | 1 (reserved) | `substrate-high` (100000, `preemptionPolicy: Never`) | `k8s-assistant-priority` |
 | Low | `default` | `kagent-default` (Helm) | 2 | none | everything else |
-| Coding | `coding` (Codex runtime) | `kagent-coding` | 1 | none | `codex-coder` (ModelConfig `codex-gpt-5-4`) |
+| Coding | `coding` (Codex runtime) | `kagent-coding` | 2 | none | `codex-coder` (ModelConfig `codex-gpt-5-4`) |
 
 To move an agent to the high tier, set `kagent.dev/harness: high` on its
 AgentTemplate. Existing actors of that agent were built from the old
