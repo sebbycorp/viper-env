@@ -79,7 +79,7 @@ Operator landing page (not GitOps): http://172.16.10.126:3000 — see
 | Omni UI | https://maniak.na-west-1.omni.siderolabs.io/ | Cluster name `omni-viper` |
 | Node LAN | `172.16.10.178` (`talos-cyv-ekb`) | Talos v1.13.10 / Kubernetes v1.36.4 |
 | Argo CD | https://172.16.10.178:30443 and :30080 | NodePorts on the Talos node |
-| kagent UI | http://172.16.10.178:30500 | ns `kagent`; Substrate in `ate-system` |
+| kagent UI | https://viper.maniak.lab:30501/ | Preferred. Lab self-signed TLS (NodePort 30501); hosts/DNS `viper.maniak.lab` → `172.16.10.178`. HTTP `:30500` is the fallback. See [docs/kagent-substrate.md](docs/kagent-substrate.md) |
 | Vault | `http://172.16.10.111:8200` | HTTP only; AppRole (see above) |
 | Lab Homepage | http://172.16.10.126:3000 | Alpine LXC 143 on iceman |
 

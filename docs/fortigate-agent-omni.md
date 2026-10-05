@@ -52,7 +52,10 @@ Do not rewrite that ref to the node LAN IP or a NodePort.
 
 ## UI
 
-http://172.16.10.178:30500 — pick agent **`fortigate`**.
+https://viper.maniak.lab:30501/ (preferred; lab self-signed HTTPS) —
+pick agent **`fortigate`**. hosts/DNS `viper.maniak.lab` →
+`172.16.10.178`. HTTP `:30500` is the fallback and is not a secure
+context. Trust notes: [kagent-substrate.md](kagent-substrate.md).
 
 Homepage card: [lab-homepage.md](lab-homepage.md).
 

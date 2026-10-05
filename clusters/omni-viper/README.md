@@ -12,6 +12,7 @@ Phase-1 notes and optional overlays for the Omni-managed Kubernetes cluster.
 | Host placement | Should live on Proxmox **iceman** (`172.16.10.5`); guests migrating off **viper** (`172.16.10.6`) |
 | Feature gates | `PodCertificateRequest` + `ClusterTrustBundle` (Agent Substrate) |
 | GitOps | Argo CD (already installed; NodePorts `:30443` / `:30080`) |
+| kagent UI | https://viper.maniak.lab:30501/ (preferred). HTTP `:30500` is the fallback. |
 | Secret backend | HashiCorp Vault + External Secrets Operator |
 | Vault URL | `http://172.16.10.111:8200` (HTTP only) |
 | Vault auth | AppRole (`vault-approle` Secret, created out-of-band) |

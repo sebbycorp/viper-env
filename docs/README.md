@@ -10,7 +10,7 @@ kubeconfigs, and license material are not.
 | Doc | What it covers |
 | --- | --- |
 | [lab-homepage.md](lab-homepage.md) | Lab Homepage LXC (gethomepage) on iceman |
-| [kagent-substrate.md](kagent-substrate.md) | OSS kagent + Agent Substrate on this Omni cluster |
+| [kagent-substrate.md](kagent-substrate.md) | OSS kagent + Agent Substrate on this Omni cluster (HTTPS UI `:30501`) |
 | [typesafe-jev.md](typesafe-jev.md) | TypeSafe / Jev MCP + gated SRE agent (plan) |
 | [fortigate-agent-omni.md](fortigate-agent-omni.md) | FortiGate agent plan adapted from k8s-viper |
 
