@@ -63,12 +63,21 @@ WorkerPool. Manifests: [apps/kagent](../apps/kagent/) (Argo CD app
 | --- | --- | --- | --- | --- | --- |
 | High | `high` | `kagent-high` | 1 (reserved) | `substrate-high` (100000, `preemptionPolicy: Never`) | `k8s-assistant-priority` |
 | Low | `default` | `kagent-default` (Helm) | 2 | none | everything else |
+| Coding | `coding` (Codex runtime) | `kagent-coding` | 1 | none | `codex-coder` (ModelConfig `codex-gpt-5-4`) |
 
 To move an agent to the high tier, set `kagent.dev/harness: high` on its
 AgentTemplate. Existing actors of that agent were built from the old
 harness's template, so treat it as a new agent. Worker pods request no
 CPU, so the extra pool fits on the CPU-bound node; the PriorityClass only
 decides eviction order and never preempts other pods.
+
+The coding tier uses the `codex` Harness runtime
+(`ghcr.io/kagent-dev/kagent/codex-harness`, tag matching the running
+`golang-adk` build). Codex speaks the OpenAI Responses API, so ModelConfig
+`codex-gpt-5-4` uses `apiFormat: responses` and calls the in-cluster
+agentgateway over HTTP (`/openai/v1`). The beta4 egress can't do HTTPS to
+api.openai.com. The `/openai` backend has `policies.ai.routes` so
+`/v1/responses` isn't parsed as Chat Completions.
 
 ## Models (kagent)
 

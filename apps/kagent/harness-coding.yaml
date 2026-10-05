@@ -1,0 +1,24 @@
+# Codex runtime adapter. The image tag matches the golang-adk build the
+# default Harness runs (0.0.0-alpha.g96d16dfb5f39), so the adapter speaks the
+# same contract as this kagent controller.
+apiVersion: kagent.dev/v1alpha3
+kind: Harness
+metadata:
+  name: coding
+  namespace: kagent
+  labels:
+    app.kubernetes.io/name: coding-harness
+    app.kubernetes.io/part-of: viper-env
+spec:
+  allowedAgentTemplates:
+    selector:
+      matchLabels:
+        kagent.dev/harness: coding
+  codex: {}
+  substrate:
+    snapshotPolicy:
+      location: s3://ate-snapshots/kagent/coding
+    workerPoolRef:
+      name: kagent-coding
+  workload:
+    image: ghcr.io/kagent-dev/kagent/codex-harness@sha256:ca79edd4a6058d48e9e1152a5106e655e7608af9aef25dd1e52afc93e4b5af9e
