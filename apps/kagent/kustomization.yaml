@@ -1,0 +1,10 @@
+# Synced by the omni-viper ApplicationSet into namespace kagent.
+# Adds a high-priority Agent Substrate tier next to the Helm-owned
+# kagent-default pool (low tier); see docs/kagent-substrate.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - priorityclass.yaml
+  - workerpool-high.yaml
+  - harness-high.yaml
+  - agent-k8s-assistant-priority.yaml

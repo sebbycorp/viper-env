@@ -1,0 +1,10 @@
+# High-tier workers are evicted last under node pressure. preemptionPolicy
+# Never: they never kick other pods off this CPU-bound single node.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: substrate-high
+value: 100000
+globalDefault: false
+preemptionPolicy: Never
+description: Agent Substrate high-priority worker pool (kagent-high)

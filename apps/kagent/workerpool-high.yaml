@@ -1,0 +1,20 @@
+# Reserved capacity for high-priority agents: low-tier (kagent-default)
+# traffic can never occupy these workers. Same pinned beta4 worker image as
+# the Helm-owned pool (see docs/kagent-values.yaml substrateWorkerPool).
+apiVersion: ate.dev/v1alpha1
+kind: WorkerPool
+metadata:
+  name: kagent-high
+  namespace: kagent
+  labels:
+    app.kubernetes.io/part-of: viper-env
+    kagent.dev/worker-pool: kagent-high
+    substrate.viper-env/tier: high
+spec:
+  replicas: 1
+  sandboxClass: gvisor
+  workerImage: 127.0.0.1:5000/ate/ateom-gvisor@sha256:74ac12013eb634a7e06546f0a4a64f015ae646f5568e2910fbb6bb11051fc7eb
+  template:
+    priorityClassName: substrate-high
+    labels:
+      substrate.viper-env/tier: high

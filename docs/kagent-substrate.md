@@ -51,6 +51,25 @@ reached via hostNetwork on the node.
 After the 1.36.4 upgrade, the kagent controller uses the real ate-api
 address above. The `SUBSTRATE_OPTIONAL` workaround is **removed**.
 
+### Priority tiers
+
+Substrate has no priority queue: a Harness points at exactly one
+WorkerPool, and AgentTemplates pick a Harness by the
+`kagent.dev/harness` label. A "tier" is therefore a Harness + its own
+WorkerPool. Manifests: [apps/kagent](../apps/kagent/) (Argo CD app
+`kagent`).
+
+| Tier | Harness | WorkerPool | Workers | PriorityClass | Agents |
+| --- | --- | --- | --- | --- | --- |
+| High | `high` | `kagent-high` | 1 (reserved) | `substrate-high` (100000, `preemptionPolicy: Never`) | `k8s-assistant-priority` |
+| Low | `default` | `kagent-default` (Helm) | 2 | none | everything else |
+
+To move an agent to the high tier, set `kagent.dev/harness: high` on its
+AgentTemplate. Existing actors of that agent were built from the old
+harness's template, so treat it as a new agent. Worker pods request no
+CPU, so the extra pool fits on the CPU-bound node; the PriorityClass only
+decides eviction order and never preempts other pods.
+
 ## Models (kagent)
 
 | ModelConfig | Provider | Notes |

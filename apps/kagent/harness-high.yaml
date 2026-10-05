@@ -1,0 +1,23 @@
+# Admits AgentTemplates labelled kagent.dev/harness: high and runs them on
+# the kagent-high pool. Mirrors the default Harness apart from pool/snapshots.
+apiVersion: kagent.dev/v1alpha3
+kind: Harness
+metadata:
+  name: high
+  namespace: kagent
+  labels:
+    app.kubernetes.io/name: high-harness
+    app.kubernetes.io/part-of: viper-env
+spec:
+  allowedAgentTemplates:
+    selector:
+      matchLabels:
+        kagent.dev/harness: high
+  kagent: {}
+  substrate:
+    snapshotPolicy:
+      location: s3://ate-snapshots/kagent/high
+    workerPoolRef:
+      name: kagent-high
+  workload:
+    image: ghcr.io/kagent-dev/kagent/golang-adk@sha256:6ebe1772c5b1c4f5ca0c8e067a0ab01cdf80ddecae5ce03362e1a7eb39776c66
