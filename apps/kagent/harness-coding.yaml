@@ -1,6 +1,7 @@
-# Codex runtime adapter. The image tag matches the golang-adk build the
-# default Harness runs (0.0.0-alpha.g96d16dfb5f39), so the adapter speaks the
-# same contract as this kagent controller.
+# Codex runtime adapter, pinned to 1.0.0-alpha3 to match the kagent Enterprise
+# 1.0.0-alpha3 controller. Older adapter builds (e.g. 0.0.0-alpha.g96d16dfb5f39,
+# the golang-adk build the default Harness runs) reject the controller's config
+# with `json: unknown field "runtime_telemetry"` and never pass readyz.
 apiVersion: kagent.dev/v1alpha3
 kind: Harness
 metadata:
@@ -21,4 +22,4 @@ spec:
     workerPoolRef:
       name: kagent-coding
   workload:
-    image: ghcr.io/kagent-dev/kagent/codex-harness@sha256:ca79edd4a6058d48e9e1152a5106e655e7608af9aef25dd1e52afc93e4b5af9e
+    image: ghcr.io/kagent-dev/kagent/codex-harness@sha256:6cc547df962c9fdfe92c57089fb549083de1b5fefdb4cb1d1108de9167957d37
