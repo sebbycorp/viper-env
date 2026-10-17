@@ -1,4 +1,6 @@
 # High tier: kagent native runtime on the reserved kagent-high pool.
+# Runtime: OSS golang-adk 1.0.0-alpha13 = the contract kagent Enterprise 1.0.0-alpha10 ships with
+# (OSS alpha10-12 runtimes still require KAGENT_API_URL and crash before the golden snapshot).
 # Mirrors the default Harness apart from pool/snapshots.
 apiVersion: api.kagent.dev/v1alpha3
 kind: Harness
@@ -16,4 +18,4 @@ spec:
     workerPoolRef:
       name: kagent-high
   workload:
-    image: ghcr.io/kagent-dev/kagent/golang-adk:1.0.0-alpha10@sha256:643e2ad56def5182616e24a420a8e823ce4c7d89e776b8ead72ee16cef3d0937
+    image: ghcr.io/kagent-dev/kagent/golang-adk:1.0.0-alpha13@sha256:ae01c3a6d7e0ed2e044253a26abbfb1a9426f3176363842ca9a954762c274d36

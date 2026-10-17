@@ -150,10 +150,13 @@ To move an agent to another tier, change `spec.harnessRef` on its Agent.
 Worker pods request no CPU, so the extra pools fit on the CPU-bound node;
 the PriorityClass only decides eviction order and never preempts other pods.
 
-Harness runtime images are pinned to the controller version
-(`ghcr.io/kagent-dev/kagent/golang-adk:1.0.0-alpha10` and
-`ghcr.io/kagent-dev/kagent/codex-harness:1.0.0-alpha10`, by digest);
-mismatched builds fail on unknown config fields. Codex speaks the OpenAI
+Harness runtime images must match the controller's runtime contract, not
+its version number. kagent Enterprise 1.0.0-alpha10 (built 2026-10-13) pairs
+with OSS **1.0.0-alpha13** runtimes
+(`ghcr.io/kagent-dev/kagent/golang-adk:1.0.0-alpha13` and
+`ghcr.io/kagent-dev/kagent/codex-harness:1.0.0-alpha13`, by digest). The
+OSS alpha10-12 runtimes still require `KAGENT_API_URL` and crash before the
+golden snapshot (`GoldenActorCrashed`). Codex speaks the OpenAI
 Responses API, so ModelConfig `codex-gpt-5-4` uses `apiFormat: responses`
 and calls the in-cluster agentgateway over HTTP (`/openai/v1`). The
 `/openai` backend has `policies.ai.routes` so `/v1/responses` isn't parsed
