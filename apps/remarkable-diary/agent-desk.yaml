@@ -7,7 +7,7 @@ spec:
   template:
     metadata:
       labels: {app: agent-desk}
-      annotations: {code-rev: "k8sp-code-2"}   # bump to roll the pod when the ConfigMap changes
+      annotations: {code-rev: "alpha10-a2a-1"}   # bump to roll the pod when the ConfigMap changes
     spec:
       containers:
       - name: agent-desk
@@ -15,9 +15,12 @@ spec:
         command: ["/bin/bash", "-c"]
         args: ["pip install -q -r /cfg/requirements.txt && cd /cfg && exec uvicorn server:app --host 0.0.0.0 --port 8000"]
         env:
+        # kagent Enterprise 1.0.0-alpha10: token from the bundled IdP on :8085, A2A SendMessage on :8083.
         - {name: SUBSTRATE_URL, value: "http://kagent-controller.kagent.svc:8085"}
-        - {name: SUBSTRATE_CLUSTER, value: "omni-viper"}
-        - {name: AGENT_TEMPLATES, value: "k8s=k8s-assistant,k8sp=k8s-assistant-priority@high,forti=fortigate,code=codex-coder@coding"}
+        - {name: KAGENT_GATEWAY_URL, value: "http://kagent-controller.kagent.svc:8083"}
+        - {name: KAGENT_NAMESPACE, value: "kagent"}
+        # alias=Agent name; each Agent pairs its own Harness/tier (no more template@harness).
+        - {name: AGENT_TEMPLATES, value: "k8s=k8s-assistant,k8sp=k8s-assistant-priority,forti=fortigate,code=codex-coder"}
         - {name: GW_URL, value: "http://agentgateway-proxy.agentgateway-system.svc.cluster.local:8080/openai/v1/chat/completions"}
         - {name: MODEL, value: "gpt-5.5"}
         - {name: SESSION_TTL, value: "900"}
