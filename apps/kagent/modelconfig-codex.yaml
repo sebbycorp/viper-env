@@ -1,8 +1,7 @@
 # gpt-5.4 for the Codex harness, via the in-cluster agentgateway over plain
-# HTTP (Substrate's beta4 egress breaks direct HTTPS to api.openai.com). The
-# gateway injects the real OpenAI key from openai-secret, so the API key here
-# is the same placeholder Spark uses.
-apiVersion: kagent.dev/v1alpha3
+# HTTP. The gateway injects the real OpenAI key from openai-secret, so the API
+# key here is the same placeholder Spark uses.
+apiVersion: api.kagent.dev/v1alpha3
 kind: ModelConfig
 metadata:
   name: codex-gpt-5-4
