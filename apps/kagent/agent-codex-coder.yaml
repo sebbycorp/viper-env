@@ -1,6 +1,8 @@
 # Coding agent on the Codex harness. Codex brings its own shell and file
 # tools, sandboxed in the gVisor worker; its workspace is /data/workspace.
-apiVersion: kagent.dev/v1alpha3
+# kagent 1.0.0-alpha10: the AgentTemplate holds behaviour, the Agent pairs it
+# with a Harness (replaces the old kagent.dev/harness label selector).
+apiVersion: api.kagent.dev/v1alpha3
 kind: AgentTemplate
 metadata:
   name: codex-coder
@@ -8,7 +10,6 @@ metadata:
   labels:
     app.kubernetes.io/name: codex-coder
     app.kubernetes.io/part-of: viper-env
-    kagent.dev/harness: coding
 spec:
   description: Codex coding agent (gpt-5.4) running in a sandboxed Agent Substrate worker
   modelConfig:
@@ -19,3 +20,18 @@ spec:
     checkpointed with your session and restored when the user returns.
     Write, run and test code there. Be concise: show the files you changed
     and the commands you ran, and say plainly when something failed.
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: codex-coder
+  namespace: kagent
+  labels:
+    app.kubernetes.io/name: codex-coder
+    app.kubernetes.io/part-of: viper-env
+spec:
+  harnessRef:
+    name: coding
+  template:
+    ref:
+      name: codex-coder

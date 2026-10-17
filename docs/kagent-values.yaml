@@ -1,8 +1,80 @@
-# kagent Enterprise Helm values (release kagent, ns kagent, rev 7) — installed by Helm, not Argo CD:
-#   helm upgrade kagent oci://us-docker.pkg.dev/solo-public/kagent-enterprise-helm/charts/kagent-enterprise \
-#     --version 1.0.0-alpha3 -n kagent -f docs/kagent-values.yaml
-# Only Secret *names* appear here; license and API-key Secrets are created out of band / via ESO.
-USER-SUPPLIED VALUES: null
+# kagent Enterprise Helm values (release kagent, ns kagent) — installed by Helm, not Argo CD.
+# Fresh install of 1.0.0-alpha10 on 2026-10-17 (replaced 1.0.0-alpha3; chat/session history was not migrated).
+#   helm upgrade --install kagent-crds oci://us-docker.pkg.dev/solo-public/kagent-enterprise-helm/charts/kagent-enterprise-crds \
+#     --version 1.0.0-alpha10 -n kagent
+#   helm upgrade --install kagent oci://us-docker.pkg.dev/solo-public/kagent-enterprise-helm/charts/kagent-enterprise \
+#     --version 1.0.0-alpha10 -n kagent -f docs/kagent-values.yaml
+# Then: kubectl -n kagent patch svc kagent-ui -p '{"spec":{"ports":[{"port":8080,"nodePort":30500}]}}'
+# Agent Substrate is a separate release (docs/substrate-values.yaml). Only Secret *names* appear here.
+global:
+  cluster: omni-viper
+  istio:
+    ambient:
+      enabled: false
+  licensing:
+    createSecret: false
+    secretName: enterprise-kagent-license
+# --- Database: in-cluster Postgres (ns postgres, pgvector/pgvector:pg16), password auth ---
+database:
+  postgres:
+    connectionStringSecretRef:
+      name: kagent-postgres
+      key: connectionString
+    clientCertificate:
+      enabled: false
+config:
+  database:
+    role: kagent_owner
+    schema: kagent
+    vectorSchema: extensions
+    vectorEnabled: true
+    pool:
+      maxConns: 20
+      minConns: 2
+      maxConnIdleTime: 1800s
+      maxConnLifetime: 3600s
+  logging:
+    level: debug
+  telemetry:
+    traces:
+      endpoint: http://solo-enterprise-telemetry-collector.kagent.svc.cluster.local:4317
+  runtimeDefaults:
+    telemetry:
+      traces:
+        endpoint: http://solo-enterprise-telemetry-collector.kagent.svc.cluster.local:4317
+enterprise:
+  database:
+    postgres:
+      schema: enterprise
+  substrate:
+    usePodCertificateAPI: true
+# --- Agent Substrate (separate release `substrate` in ate-system) ---
+controller:
+  substrate:
+    enabled: true
+substrateWorkerPool:
+  create: true
+  name: kagent-default
+  replicas: 3
+  sandboxClass: gvisor
+  workerImage: us-docker.pkg.dev/solo-public/substrate-enterprise/ateom-gvisor:v0.5.0-alpha3-e492046
+# --- Default model: Spark Qwen (DGX Spark 172.16.10.173 via Service kagent/dgx-spark) ---
+providers:
+  default: openAI
+  openAI:
+    provider: OpenAI
+    model: qwen3.8-flash-next
+    apiKeySecretRef: kagent-spark-openai
+    apiKeySecretKey: OPENAI_API_KEY
+    config:
+      apiFormat: chatCompletions
+      baseUrl: http://dgx-spark.kagent.svc.cluster.local:8000/v1
+kagent-tools:
+  enabled: true
+grafana-mcp:
+  enabled: false
+oauth2-proxy:
+  enabled: false
 clickhouse:
   resources:
     limits:
@@ -12,80 +84,18 @@ clickhouse:
       cpu: 250m
       ephemeral-storage: 50Mi
       memory: 1Gi
-controller:
-  loglevel: debug
-  substrate:
-    ateApiEndpoint: dns:///api.ate-system.svc:443
-    atenetRouterURL: ""
-    defaultWorkerPool:
-      name: kagent-default
-      namespace: kagent
-    enabled: true
-database:
-  postgres:
-    bundled:
-      storage: 2Gi
-      storageClassName: local-path
-global:
-  cluster: omni-viper
-  istio:
-    ambient:
-      enabled: false
-  licensing:
-    createSecret: false
-    secretName: enterprise-kagent-license
-grafana-mcp:
-  enabled: false
-kagent-tools:
-  enabled: true
-oauth2-proxy:
-  enabled: false
-otel:
-  captureSensitiveContent: true
-  logging:
-    captureRawApiBodies: true
-    enabled: true
-    exporter:
-      otlp:
-        endpoint: http://solo-enterprise-telemetry-collector.kagent.svc.cluster.local:4317
-  tracing:
-    enabled: true
-    exporter:
-      otlp:
-        endpoint: http://solo-enterprise-telemetry-collector.kagent.svc.cluster.local:4317
-providers:
-  default: openAI
-  openAI:
-    apiKeySecretKey: OPENAI_API_KEY
-    apiKeySecretRef: kagent-spark-openai
-    config:
-      apiFormat: chatCompletions
-      baseUrl: http://dgx-spark.kagent.svc.cluster.local:8000/v1
-    model: qwen3.8-flash-next
-    provider: OpenAI
-substrate:
-  enabled: false
-substrateWorkerPool:
-  create: true
-  name: kagent-default
-  replicas: 3
-  sandboxClass: gvisor
-  workerImage: 127.0.0.1:5000/ate/ateom-gvisor@sha256:74ac12013eb634a7e06546f0a4a64f015ae646f5568e2910fbb6bb11051fc7eb
 telemetry:
   enabled: true
-  products:
-    agentgateway:
-      enabled: true
-      namespace: agentgateway-system
-  selfMonitoring:
-    enabled: true
-    verbose: true
   traces:
     enabled: true
     verbose: true
+  selfMonitoring:
+    enabled: true
+    verbose: true
+# UI on NodePort 30500 (HTTP); HTTPS 30501 is the separate nginx kagent-ui-tls front.
 ui:
   service:
+    type: NodePort
     ports:
       port: 8080
       targetPort: 8080
-    type: NodePort

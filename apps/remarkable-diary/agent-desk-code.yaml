@@ -163,7 +163,7 @@ data:
     httpx==0.27.2
     pydantic==2.9.2
   server.py: |
-    # server.py — /ask router: @k8s / @k8sp / @forti / @code -> Agent Substrate AgentTemplates -> render-spec.
+    # server.py — /ask router: @k8s / @k8sp / @forti / @code -> kagent Agents (A2A on Agent Substrate) -> render-spec.
     import asyncio, os, time
     import httpx
     from fastapi import FastAPI
@@ -175,12 +175,14 @@ data:
 
     def _pairs(s): return dict(p.split("=", 1) for p in s.split(",") if "=" in p)
     TEMPLATES = _pairs(os.environ.get("AGENT_TEMPLATES",
-                                      "k8s=k8s-assistant,k8sp=k8s-assistant-priority@high,forti=fortigate,code=codex-coder@coding"))
+                                      "k8s=k8s-assistant,k8sp=k8s-assistant-priority,forti=fortigate,code=codex-coder"))
     NAMES = {"k8s": "k8s", "k8sp": "k8s-priority", "forti": "fortigate", "code": "codex"}
     AGENT_TIMEOUT = 90.0            # wall-clock bound per agent call (httpx timeouts are per read)
     SESSION_TTL = float(os.environ.get("SESSION_TTL", "900"))
+    # AGENT_TEMPLATES maps alias -> kagent Agent name (each Agent already pairs its Harness / tier).
     _client = SubstrateClient(os.environ.get("SUBSTRATE_URL", "http://kagent-controller.kagent.svc:8085"),
-                              cluster=os.environ.get("SUBSTRATE_CLUSTER", "omni-viper"))
+                              gateway=os.environ.get("KAGENT_GATEWAY_URL", "http://kagent-controller.kagent.svc:8083"),
+                              ns=os.environ.get("KAGENT_NAMESPACE", "kagent"))
     substrate_ask = _client.ask          # patched in tests
 
     async def coerce(text, fmt, query=""):   # patched in tests (may be sync there)
@@ -249,159 +251,80 @@ data:
     @app.get("/healthz")
     async def healthz(): return {"ok": True}
   substrate.py: |
-    # substrate.py — client for kagent AgentTemplates running on Agent Substrate (ATE).
-    # No per-agent URL exists: create an AgentInstance, then stream lf.a2a.v1 SendStreamingMessage
-    # (gRPC-web, protobuf) with header x-kagent-agent-instance-id. See DISCOVERY / substrate notes.
-    # Reached through the kagent-ui nginx (NodePort) which proxies /autoauth and /api to the controller :8085.
-    import struct, uuid
+    # substrate.py — client for kagent Enterprise 1.0.0-alpha10 Agents (api.kagent.dev/v1alpha3) on Agent Substrate.
+    # alpha10 removed the alpha3 AgentInstanceService (CreateAgentInstance + x-kagent-agent-instance-id). An Agent
+    # now pairs its own Harness, and callers talk to it over A2A JSON-RPC at the controller gateway:
+    #   token:   POST {token_base}/autoauth/token  {"user_type": "admin"}   (bundled IdP; controller :8085)
+    #   message: POST {gateway}/agents/{ns}/{agent}  JSON-RPC "SendMessage", header A2A-Version: 1.0  (controller :8083)
+    # The returned task.contextId is the Session id: pass it back on the next message to continue the conversation.
+    import time, uuid
     import httpx
-
-    def _vl(n):
-        o = b""
-        while True:
-            b = n & 0x7F; n >>= 7
-            if n: o += bytes([b | 0x80])
-            else: return o + bytes([b])
-
-    def ld(f, b):
-        b = b.encode() if isinstance(b, str) else b
-        return _vl(f << 3 | 2) + _vl(len(b)) + b
-
-    def vi(f, n): return _vl(f << 3) + _vl(n)
-    def frame(b): return b"\x00" + struct.pack(">I", len(b)) + b
-
-    def _rv(b, i):
-        v = s = 0
-        while True:
-            c = b[i]; i += 1; v |= (c & 0x7F) << s; s += 7
-            if not c & 0x80: return v, i
-
-    def rd(b):
-        """Decode one protobuf message level into [(field, value)]; raises ValueError on garbage."""
-        i = 0; out = []
-        while i < len(b):
-            k, i = _rv(b, i); f, w = k >> 3, k & 7
-            if w == 0: v, i = _rv(b, i)
-            elif w == 2:
-                n, i = _rv(b, i); v = b[i:i + n]; i += n
-            elif w == 1: v = b[i:i + 8]; i += 8
-            elif w == 5: v = b[i:i + 4]; i += 4
-            else: raise ValueError(f"wire type {w}")
-            out.append((f, v))
-        return out
-
-    def get(fs, f): return [v for k, v in fs if k == f]
-
-    def build_create_req(ns: str, harness: str, template: str, request_id: str = "", name: str = "agent-desk") -> bytes:
-        ref = lambda n: ld(1, ns) + ld(2, n)
-        return ld(1, ref(harness)) + ld(2, ref(template)) + ld(3, request_id or str(uuid.uuid4())) + ld(4, name)
-
-    def build_send_req(context_id: str, text: str, message_id: str = "") -> bytes:
-        m = ld(1, message_id or uuid.uuid4().hex) + ld(2, context_id) + vi(4, 1) + ld(5, ld(1, text))
-        return ld(2, m)
-
-    def parse_instance(payload: bytes):
-        """CreateAgentInstanceResponse payload -> (instance_id, context_id)."""
-        inst = rd(get(rd(payload), 1)[0])
-        return get(inst, 1)[0].decode(), get(inst, 14)[0].decode()
-
-    def artifact_text(payload: bytes):
-        """One StreamResponse payload -> (text, last_chunk). text '' for non-text events."""
-        for f, v in rd(payload):
-            if f != 4: continue                              # artifactUpdate only
-            ev = rd(v)
-            art = rd(get(ev, 3)[0]) if get(ev, 3) else []
-            txt = ""
-            for part in get(art, 4):
-                try: txt += "".join(t.decode() for t in get(rd(part), 1) if isinstance(t, bytes))
-                except (ValueError, UnicodeDecodeError, IndexError): pass   # tool/data parts
-            return txt, bool(get(ev, 5) and get(ev, 5)[0])
-        return "", False
-
-    class FrameReader:
-        """Incremental grpc-web frame splitter. feed(bytes) -> list of (is_trailer, payload)."""
-        def __init__(self): self.buf = b""
-        def feed(self, data: bytes):
-            self.buf += data; out = []
-            while len(self.buf) >= 5:
-                n = struct.unpack(">I", self.buf[1:5])[0]
-                if len(self.buf) < 5 + n: break
-                out.append((bool(self.buf[0] & 0x80), self.buf[5:5 + n])); self.buf = self.buf[5 + n:]
-            return out
-
-    class AnswerAccumulator:
-        def __init__(self): self.final = None; self.chunks = []
-        def add(self, payload: bytes):
-            txt, last = artifact_text(payload)
-            if not txt: return
-            if last: self.final = txt
-            else: self.chunks.append(txt)
-        def text(self) -> str:
-            return (self.final if self.final is not None else "".join(self.chunks)).strip()
 
     class Unauthorized(Exception):
         pass
 
+    def build_send_req(text: str, context_id: str = "", message_id: str = "") -> dict:
+        msg = {"messageId": message_id or uuid.uuid4().hex, "role": "ROLE_USER", "parts": [{"text": text}]}
+        if context_id: msg["contextId"] = context_id
+        return {"jsonrpc": "2.0", "id": uuid.uuid4().hex, "method": "SendMessage", "params": {"message": msg}}
+
+    def _texts(parts):
+        return "".join(p["text"] for p in parts or [] if isinstance(p, dict) and isinstance(p.get("text"), str))
+
+    def parse_result(body: dict):
+        """SendMessage JSON-RPC response -> (answer, context_id). Raises RuntimeError on JSON-RPC/task errors."""
+        if body.get("error"):
+            e = body["error"]; raise RuntimeError(f"a2a {e.get('code')}: {e.get('message')}")
+        res = body.get("result") or {}
+        if "task" in res:
+            task = res["task"]; state = (task.get("status") or {}).get("state", "")
+            status_txt = _texts(((task.get("status") or {}).get("message") or {}).get("parts"))
+            if state in ("TASK_STATE_FAILED", "TASK_STATE_REJECTED", "TASK_STATE_CANCELED"):
+                raise RuntimeError(f"task {state}: {status_txt}")
+            # Final answer = the last text artifact (earlier artifacts are tool calls / tool results).
+            ans = ""
+            for art in task.get("artifacts") or []:
+                t = _texts(art.get("parts"))
+                if t.strip(): ans = t
+            return (ans or status_txt).strip(), task.get("contextId", "")
+        if "message" in res:                                  # direct Message reply (no task)
+            m = res["message"]; return _texts(m.get("parts")).strip(), m.get("contextId", "")
+        raise RuntimeError("a2a: empty result")
+
 
     class SubstrateClient:
-        """base: e.g. http://172.16.10.178:30500 (kagent-ui) or http://kagent-controller.kagent.svc:8085."""
-        def __init__(self, base, cluster="omni-viper", ns="kagent", harness="default"):
-            self.base = base.rstrip("/"); self.cluster = cluster; self.ns = ns; self.harness = harness
+        """token_base: controller enterprise port (:8085, serves /autoauth/token).
+        gateway: controller A2A gateway (:8083, serves /agents/{ns}/{name})."""
+        def __init__(self, token_base, gateway="http://kagent-controller.kagent.svc:8083", ns="kagent", **_ignored):
+            self.token_base = token_base.rstrip("/"); self.gateway = gateway.rstrip("/"); self.ns = ns
             self._tok = None; self._tok_ts = 0.0
 
-        def _api(self, method): return f"{self.base}/api/proxy/cluster/{self.cluster}/api/{method}"
-
         async def _token(self, c, force=False):
-            import time
             if self._tok and not force and time.time() - self._tok_ts < 3600: return self._tok
-            r = await c.post(self.base + "/autoauth/token", json={"user_type": "admin"})
+            r = await c.post(self.token_base + "/autoauth/token", json={"user_type": "admin"})
             r.raise_for_status(); self._tok = r.json()["access_token"]; self._tok_ts = time.time()
             return self._tok
 
-        async def _call(self, c, method, body, extra_headers=None):
-            h = {"Authorization": "Bearer " + await self._token(c), "content-type": "application/grpc-web+proto",
-                 "x-grpc-web": "1"}; h.update(extra_headers or {})
-            fr, acc = FrameReader(), []
-            async with c.stream("POST", self._api(method), content=frame(body), headers=h) as r:
-                if r.status_code == 401: raise Unauthorized()
-                r.raise_for_status()
-                st = r.headers.get("grpc-status")
-                if st == "16": raise Unauthorized()
-                if st not in (None, "0"): raise RuntimeError(f"grpc {st}: {r.headers.get('grpc-message')}")
-                async for chunk in r.aiter_bytes():
-                    for trailer, p in fr.feed(chunk):
-                        if trailer:
-                            if b"grpc-status: 16" in p: raise Unauthorized()
-                            if b"grpc-status: 0" not in p: raise RuntimeError(p.decode(errors="replace").strip())
-                        else: acc.append(p)
-            return acc
+        async def _send(self, c, agent, req):
+            h = {"Authorization": "Bearer " + await self._token(c), "content-type": "application/json",
+                 "A2A-Version": "1.0"}
+            r = await c.post(f"{self.gateway}/agents/{self.ns}/{agent}", json=req, headers=h)
+            if r.status_code == 401: raise Unauthorized()
+            r.raise_for_status()
+            return r.json()
 
-        async def _call_authed(self, c, method, body, extra_headers=None):
-            """_call, refreshing the token and retrying once on 401 / UNAUTHENTICATED."""
-            try:
-                return await self._call(c, method, body, extra_headers)
-            except Unauthorized:
-                await self._token(c, force=True)
-                return await self._call(c, method, body, extra_headers)
-
-        async def create_instance(self, c, template):
-            # "name@harness" picks a non-default Harness (e.g. high, coding tiers).
-            name, _, harness = template.partition("@")
-            frames = await self._call_authed(c, "kagent.api.v1alpha1.AgentInstanceService/CreateAgentInstance",
-                                      build_create_req(self.ns, harness or self.harness, name))
-            return parse_instance(frames[0])
-
-        async def ask(self, template, text, *, timeout=90.0, session=""):
-            """Returns (answer, session). session = 'instanceId|contextId'; pass it back for follow-ups."""
+        async def ask(self, agent, text, *, timeout=90.0, session=""):
+            """Returns (answer, session). session = the A2A contextId; pass it back for follow-ups."""
+            agent = agent.partition("@")[0]                 # tolerate old "name@harness" entries
+            req = build_send_req(text, session)
             async with httpx.AsyncClient(timeout=timeout) as c:
-                iid, _, ctx = session.partition("|")
-                if not (iid and ctx):
-                    iid, ctx = await self.create_instance(c, template)
-                acc = AnswerAccumulator()
-                for p in await self._call_authed(c, "lf.a2a.v1.A2AService/SendStreamingMessage", build_send_req(ctx, text),
-                                          {"x-kagent-agent-instance-id": iid}):
-                    acc.add(p)
-                return acc.text(), f"{iid}|{ctx}"
+                try:
+                    body = await self._send(c, agent, req)
+                except Unauthorized:                        # expired token: refresh once
+                    await self._token(c, force=True)
+                    body = await self._send(c, agent, req)
+            ans, ctx = parse_result(body)
+            return ans, ctx or session
 kind: ConfigMap
 metadata:
   name: agent-desk-code

@@ -1,6 +1,6 @@
 # High-tier copy of k8s-assistant (owned by the remarkable-diary app) so the
 # two tiers can be demoed side by side. Only the name and harness differ.
-apiVersion: kagent.dev/v1alpha3
+apiVersion: api.kagent.dev/v1alpha3
 kind: AgentTemplate
 metadata:
   name: k8s-assistant-priority
@@ -8,7 +8,6 @@ metadata:
   labels:
     app.kubernetes.io/name: k8s-assistant-priority
     app.kubernetes.io/part-of: viper-env
-    kagent.dev/harness: high
 spec:
   description: Read-only Kubernetes assistant for cluster omni-viper (high-priority tier)
   modelConfig:
@@ -40,3 +39,18 @@ spec:
       - k8s_get_pod_logs
       - k8s_get_available_api_resources
       - k8s_get_cluster_configuration
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: k8s-assistant-priority
+  namespace: kagent
+  labels:
+    app.kubernetes.io/name: k8s-assistant-priority
+    app.kubernetes.io/part-of: viper-env
+spec:
+  harnessRef:
+    name: high
+  template:
+    ref:
+      name: k8s-assistant-priority

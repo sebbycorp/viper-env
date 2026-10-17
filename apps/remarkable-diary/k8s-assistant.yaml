@@ -1,4 +1,6 @@
-apiVersion: kagent.dev/v1alpha3
+# kagent 1.0.0-alpha10 (api.kagent.dev/v1alpha3): AgentTemplate + Agent paired
+# with the default Harness (apps/kagent/harness-default.yaml).
+apiVersion: api.kagent.dev/v1alpha3
 kind: AgentTemplate
 metadata:
   name: k8s-assistant
@@ -6,7 +8,6 @@ metadata:
   labels:
     app.kubernetes.io/name: k8s-assistant
     app.kubernetes.io/part-of: viper-env
-    kagent.dev/harness: default
 spec:
   description: Read-only Kubernetes assistant for cluster omni-viper
   modelConfig:
@@ -38,3 +39,18 @@ spec:
       - k8s_get_pod_logs
       - k8s_get_available_api_resources
       - k8s_get_cluster_configuration
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: k8s-assistant
+  namespace: kagent
+  labels:
+    app.kubernetes.io/name: k8s-assistant
+    app.kubernetes.io/part-of: viper-env
+spec:
+  harnessRef:
+    name: default
+  template:
+    ref:
+      name: k8s-assistant
