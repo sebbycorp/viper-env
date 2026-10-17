@@ -163,7 +163,6 @@ data:
     httpx==0.27.2
     pydantic==2.9.2
   server.py: |
-  server.py: |
     # server.py — /ask router: @k8s / @k8sp / @forti / @code -> kagent Agents (A2A on Agent Substrate) -> render-spec.
     import asyncio, os, time
     import httpx
