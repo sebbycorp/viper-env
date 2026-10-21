@@ -26,15 +26,30 @@ deleted and the Helm value restored. The span template is
 Every route is an `AgentgatewayBackend` with `spec.ai.provider.custom`. Its
 `formats: [{type: Completions}]` and `backendRef: {name: td-mock-llm, port: 8080}`
 were verified, and so was a matching HTTPRoute on `agentgateway-proxy` with
-`hostnames: [td.demo.local]`. All of these were tried, and each returned a non-zero
+`hostnames: [td.demo.local]`. Each (providerOverride, model) pair below returned a non-zero
 `agw.ai.usage.cost.total`.
 
-| route id | providerOverride | backend `model` | `provider` in custom_dimensions | catalog provider key | catalog model key | rates $/1M (in / out / cacheRead) | priced by |
-|---|---|---|---|---|---|---|---|
-| azure-gpt | `azure` | `gpt-5.4` | `azure` | `azure` | `gpt-5.4` | 2.5 / 15 / 0.25 (above 272k context: 5 / 22.5 / 0.5) | proxy **built-in** catalog |
-| azure-gpt-mini | `azure` | `gpt-5.4-mini` | `azure` | `azure` | `gpt-5.4-mini` | 0.75 / 4.5 / ? | proxy **built-in** catalog |
-| bedrock-opus | `aws.bedrock` | `anthropic.claude-opus-5-5` | `aws.bedrock` | `aws.bedrock` | `anthropic.claude-opus-5-5` | 4 / 20 / 0.2 (cacheWrite 5) | `model-costs` ConfigMap |
-| mistral-large | `mistral` | `mistral-large-latest` | `mistral` | `mistral` | `mistral-large-latest` | 0.5 / 1.5 / 0.05 | proxy **built-in** catalog |
+| route id | HTTPRoute path (PathPrefix) | providerOverride | backend `model` | `provider` in custom_dimensions | catalog provider key | catalog model key | rates $/1M (in / out / cacheRead) | priced by | Task 6 required |
+|---|---|---|---|---|---|---|---|---|---|
+| azure-gpt | `/azure/gpt-5-4` | `azure` | `gpt-5.4` | `azure` | `azure` | `gpt-5.4` | 2.5 / 15 / 0.25 (above 272k context: 5 / 22.5 / 0.5) | proxy **built-in** catalog | no |
+| azure-gpt-mini | `/azure/gpt-5-4-mini` (proposed) | `azure` | `gpt-5.4-mini` | `azure` | `azure` | `gpt-5.4-mini` | 0.75 / 4.5 / **not measured** (see note) | proxy **built-in** catalog | no (yes only if `gpt-4.1-mini` is kept) |
+| bedrock-opus | `/bedrock/claude-opus-5-5` | `aws.bedrock` | `anthropic.claude-opus-5-5` | `aws.bedrock` | `aws.bedrock` | `anthropic.claude-opus-5-5` | 4 / 20 / 0.2 (cacheWrite 5) | `model-costs` ConfigMap | no |
+| mistral-large | `/mistral/mistral-large` | `mistral` | `mistral-large-latest` | `mistral` | `mistral` | `mistral-large-latest` | 0.5 / 1.5 / 0.05 | proxy **built-in** catalog | no |
+
+Notes on the table:
+- **azure-gpt-mini.** During the spike this route was `/azure/gpt-4-1-mini` with model
+  `gpt-4.1-mini`, and it was **unpriced**. The `gpt-5.4-mini` row was verified through a
+  passthrough probe backend (`providerOverride: azure`, no backend `model`, request
+  `model: gpt-5.4-mini`), which priced it at input 0.75 and output 4.5. The probe sent no
+  cached tokens, so the built-in cacheRead rate for `gpt-5.4-mini` is unknown.
+- **If gpt-5.4-mini has no cacheRead rate,** cached tokens would add $0 rather than fail.
+  This is inferred from how the other cost fields behave; it was not observed. So either
+  send `x-td-cached-tokens: 0` for that model, or check one span's
+  `agw.ai.usage.cost.cache_read` before relying on it.
+- **Cache rates that were measured:**
+  - `gpt-5.4` at 0.25: 200 cached tokens cost $0.00005.
+  - `mistral-large-latest` at 0.05: derived from the $0.00116 total of the first test.
+  - `anthropic.claude-opus-5-5` at 0.2: from the Opus span checked below.
 
 Pricing checked by hand on a live span. The Opus request had 48,213 input tokens, of
 which 31,000 were cached, plus 1,873 output tokens:
@@ -68,9 +83,11 @@ The gateway rewrites the request body `model` to the backend `model`, so the cli
 `model` value does not matter. If the backend has no `model`, the request's `model`
 passes through. That was handy for probing.
 
-Do not show `gen_ai.provider.name` / `provider` as anything other than these three
-values. A UI "Provider" filter will list exactly `azure`, `aws.bedrock` and `mistral`
-for TD, next to the real `openai` and `aws.bedrock`.
+Backfilled spans must use exactly these three provider values, `azure`, `aws.bedrock`
+and `mistral`, in both `gen_ai.provider.name` and the `provider` pair of
+`custom_dimensions`. Live TD traffic produces them too. The UI "Provider" filter will
+then list `azure`, `aws.bedrock` and `mistral` for TD. Real traffic adds `openai`, and
+`aws.bedrock` is shared with the real Bedrock route.
 
 ## 1. Virtual-key Secret format (verified)
 
@@ -95,7 +112,48 @@ Each data entry name is the key id, and each value is JSON:
   it has **no** `apiKey.id` and no metadata, so it carries no virtualKey dimension.
 - A wrong key gets `401`. The span is recorded, with no dimensions.
 
-Policy (the Secret must be in the **policy's namespace**):
+How entries sit in the Secret, as verified on the UI-created `td-spike-keys`:
+- Each **data key name is the key id**. It is the same string as `metadata.id` and is
+  the "Key ID" shown in the UI.
+- Each **value is the JSON document**, base64-encoded under `data`. The UI wrote
+  `data: {td-spike-ui-1: <base64 of the JSON>}`.
+- Spike keys added with `kubectl patch` under `data` also worked:
+  - `td-flat-1`: flat metadata.
+  - `td-ui-style-1`: metadata using `custom`.
+  - `td-team-shared-1`: no user.
+  - `td-final-1`: the recommended format.
+  - `td-plain-1`: a plain string.
+- `stringData` is the standard Kubernetes write-only alias. The API server stores it
+  as base64 under `data`, so the result is identical.
+- The Secret type is `Opaque`. The UI added no labels; add `demo: td` yourself.
+
+Copyable manifest. Two keys are shown: a personal key and a shared team key with no user.
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: td-virtual-keys
+  namespace: td-demo
+  labels: {demo: td}
+type: Opaque
+stringData:
+  td-u-jane-doe-copilot: '{"key":"sk-agw-3fJ9kQ2xV7mL0pR8sT1uW4yZ6aB5cD2eF9gH0jK3lMn","keyHash":null,"metadata":{"id":"td-u-jane-doe-copilot","organization":"TD","group":"personal-banking","user":"jane.doe@td.com","custom":{"team":"retail-cards","project":"mobile-app-modernization"}}}'
+  td-t-platform-eng-shared: '{"key":"sk-agw-Qw8eRt5yUi2oPa7sDf4gHj1kLz9xCv6bNm3qWe0rTyU","keyHash":null,"metadata":{"id":"td-t-platform-eng-shared","organization":"TD","group":"enterprise-technology","custom":{"team":"platform-eng","project":"cloud-migration"}}}'
+```
+
+In this example, the data key name, `metadata.id` and the UI Key ID are all the same
+string.
+
+The shared team key has no `user`. Requests made with it carry no `user` pair in
+`custom_dimensions`; this was verified with `td-team-shared-1`. The UI shows `—` in the
+User column.
+
+Policy (the Secret must be in the **policy's namespace**). **Every TD HTTPRoute must be
+listed in `targetRefs`.** A route that is left out gets no API-key auth, which means no
+`apiKey.*` dimensions (no org, team or user) and no budget enforcement. This was verified:
+the un-targeted spike route `azure-gpt-mini` produced spans carrying only
+`model`/`provider`/`client`.
 
 ```yaml
 apiVersion: enterpriseagentgateway.solo.io/v1alpha1
@@ -104,6 +162,7 @@ metadata: {name: td-apikey, namespace: td-demo, labels: {demo: td}}
 spec:
   targetRefs:            # TD HTTPRoutes only; never the Gateway
   - {group: gateway.networking.k8s.io, kind: HTTPRoute, name: azure-gpt}
+  - {group: gateway.networking.k8s.io, kind: HTTPRoute, name: azure-gpt-mini}
   - {group: gateway.networking.k8s.io, kind: HTTPRoute, name: bedrock-opus}
   - {group: gateway.networking.k8s.io, kind: HTTPRoute, name: mistral-large}
   traffic:
@@ -139,6 +198,18 @@ So the fallback of putting the client tool in key metadata is **not needed**, an
 per user (per project) is enough. The raw user agent is not stored as a span attribute;
 only the dimension value is.
 
+Results by header value:
+- `python-requests/2.32` and `curl/8.x` produced `client=Other` (verified).
+- **No `User-Agent` header at all: unknown, not tested.** Every spike request carried
+  one, because curl sends a default.
+  - **Inferred:** the map lookup fails and the `client` pair is **omitted**, like other
+    unresolved expressions. That was observed for missing `apiKey.*` fields. The result
+    would not be `Other`.
+  - If `Other` is wanted for that case, guard the expression:
+    `has(request.headers["user-agent"]) ? (...) : "Other"`. The `has()` form is not
+    tested either.
+  - The generator should always send a User-Agent.
+
 ## 3. Provider label and pricing
 
 See the route table above. The label equals `providerOverride` verbatim, and the price is
@@ -156,10 +227,14 @@ plus the `model-costs` and `spark-costs` ConfigMaps.
 - The controller renders the same config into the proxy ConfigMap `agentgateway-proxy`
   (`config.standardAttributes`, a flat id → CEL map). The running proxy picked it up in
   about **60 s** with no pod restart, which is the kubelet ConfigMap sync delay.
-- Gateway-level `standardAttributes` would mean `EnterpriseAgentgatewayParameters.rawConfig`
-  on the Argo-managed `agentgateway-proxy` parameters. That was **not** tried, because it
-  touches an Argo object. The UI only reads the ConfigMap, so those attributes would not
-  appear in the UI's dimension list.
+- **Gateway-level `standardAttributes`: INFERRED, NOT TRIED.** They would mean
+  `EnterpriseAgentgatewayParameters.rawConfig` on the Argo-managed
+  `agentgateway-proxy` parameters, and that was not tried because it touches an Argo
+  object.
+  - The conclusion that such attributes would **not** appear in the UI's dimension list
+    is inferred. The UI fetches its dimension list through `GetBudgetDimensions`, and
+    its filters tracked the ConfigMap changes exactly.
+  - The UI was not observed ignoring a Gateway-level attribute.
 - **Decision for Task 5:** `helm upgrade --reuse-values -f demos/td-traffic/<values>.yaml`
   at chart `oci://us-docker.pkg.dev/solo-public/enterprise-agentgateway/charts/enterprise-agentgateway`
   `--version v2026.10.0`. The UI also has an `UpdateBudgetDimensions` API (Dimensions
@@ -218,6 +293,8 @@ Notable fields:
   input, cached tokens included. Cached tokens go in
   `gen_ai.usage.cache_read.input_tokens`, and the cost splits `input` (uncached) from
   `cache_read`.
+- The budget ids and the virtual key (`td-final-1`) in the template are **spike names**
+  (§8); replace them when templating.
 - Budget attributes are `agw.ai.budgets.{applied,count,ids[],action_taken,unit,
   over_limit,over_limit_after_debit,blocked,charged_micro_usd,charged_tokens,
   charged_tokens_exact}`. Without a matching budget, only `applied: false, count: 0` is
@@ -294,7 +371,27 @@ spec:
     limit: {amount: 1, unit: USD}            # amount: INTEGER >= 1 (no cents!)
     window: {unit: Month}                    # object, not a string: Day|Week|Month|Year
     onBudgetExceeded: Audit
+  - name: platform-eng-daily-tokens          # Tokens-unit budget (verified, same spike object)
+    subject: {organization: TD, team: platform-eng}
+    limit: {amount: 1000, unit: Tokens}
+    window: {unit: Day}
+    onBudgetExceeded: Audit
 ```
+
+**About the budget names in the span template.** The spike object was
+`td-demo/td-spike-budget`, holding the two entries above:
+`platform-eng-monthly-usd` (USD) and `platform-eng-daily-tokens` (Tokens). So the
+template's `agw.ai.budgets.ids` are spike names. Task 7 must rewrite them to the real
+TD budget object and entry names, in the format `<namespace>/<budget object>/<entry name>`.
+
+The template's `agw.ai.budgets.unit: "TOKENS"`, `charged_tokens: 50086` and
+`over_limit: true` reflect the Tokens entry. That entry's 1000-token limit was already
+exceeded. When several budgets apply, the span reports a single `unit`. Which one it
+picks was not determined; here it was TOKENS.
+
+`charged_micro_usd: "112512"` equals the span cost × 1e6, and `charged_tokens` equals
+input + output (48,213 + 1,873). For USD-only budgets, the value of `unit` is presumably
+`USD`, but that was not observed.
 
 - Without `traffic.entBudgetEnforcement` on a policy covering the routes, the status is
   `Enforced=False NotReferenced`. With it, the budget is `Enforced=True` and spans show
