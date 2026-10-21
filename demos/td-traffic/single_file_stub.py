@@ -26,20 +26,34 @@ __PAYLOAD__
 
 
 def payload_dir() -> Path:
+    root = None
     try:
-        root = Path(os.environ.get("TD_TRAFFIC_CACHE") or Path.home() / ".cache" / "td-traffic")
+        root = _private_root(Path(os.environ.get("TD_TRAFFIC_CACHE") or Path.home() / ".cache" / "td-traffic"))
     except RuntimeError:                            # no HOME
-        root = Path(tempfile.gettempdir()) / "td-traffic-cache"
+        pass
+    if root is None:                                # no safe shared cache: unpack privately for this run
+        root = Path(tempfile.mkdtemp(prefix="td-traffic-"))
     try:
         return _extract(base64.b64decode(PAYLOAD), root)
     except OSError as e:
-        sys.exit(f"td-traffic: cannot unpack to {root} ({e}). Set TD_TRAFFIC_CACHE to a writable directory.")
+        sys.exit(f"td-traffic: cannot unpack to {root} ({e}). Set TD_TRAFFIC_CACHE to a private writable directory.")
+
+
+def _private_root(root: Path) -> Path | None:
+    """The cache root if it is ours alone (created 0700, owned by us, not group/other writable)."""
+    try:
+        root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        st = root.stat()
+    except OSError:
+        return None
+    if hasattr(os, "getuid") and (st.st_uid != os.getuid() or st.st_mode & 0o022):
+        return None
+    return root
 
 
 def _extract(blob: bytes, root: Path) -> Path:
     dest = root / hashlib.sha256(blob).hexdigest()[:16]
     if not (dest / ".complete").exists():
-        root.mkdir(parents=True, exist_ok=True)
         tmp = Path(tempfile.mkdtemp(prefix=".extract-", dir=root))
         with zipfile.ZipFile(io.BytesIO(blob)) as z:
             z.extractall(tmp, [n for n in z.namelist() if n != "__main__.py"])
