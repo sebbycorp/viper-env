@@ -1,13 +1,14 @@
 """Deterministic synthetic TD org model (fictional people, plausible bank structure)."""
 from __future__ import annotations
 
+import base64
 import hashlib
 import random
 import re
 from dataclasses import dataclass
 from typing import Literal
 
-Tool = Literal["claude-code", "copilot", "claude-desktop"]
+Tool = Literal["copilot", "vscode", "claude-code", "claude-desktop"]
 Persona = Literal["power", "regular", "light"]
 
 
@@ -19,15 +20,18 @@ class User:
     team: str
     tool: Tool
     persona: Persona
-    mistral_byok: bool
 
 
 @dataclass(frozen=True)
 class VirtualKey:
     id: str
     secret: str
-    user: User
+    kind: Literal["personal", "team"]
+    team: str
+    group: str
     project: str
+    user: User | None
+    tool: Tool
 
 
 @dataclass(frozen=True)
@@ -75,11 +79,32 @@ NAMES = [
     "Connor Murphy", "Fatima Qureshi", "Gabriel Morin", "Yuna Park", "Victor Nguyen",
 ]
 
-N_COPILOT, N_CODE, N_DESKTOP, N_BYOK = 20, 10, 5, 4
+N_COPILOT, N_VSCODE, N_CODE, N_DESKTOP, N_TEAM_KEYS = 16, 6, 9, 4, 4
+
+# Exact persona mix per tool (shuffled deterministically); copilot needs power users.
+PERSONAS: dict[str, list[Persona]] = {
+    "copilot": ["power"] * 4 + ["regular"] * 6 + ["light"] * 6,
+    "vscode": ["power"] * 3 + ["regular"] * 3,
+    "claude-code": ["power"] * 7 + ["regular"] * 2,
+    "claude-desktop": ["regular"] * 4,
+}
 
 
 def _slug(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
+
+
+def _secret(seed: int, kid: str) -> str:
+    """Solo UI virtual-key format: sk-agw- + 43 base64url chars (deterministic)."""
+    d = hashlib.sha256(f"{seed}:{kid}".encode()).digest()
+    return "sk-agw-" + base64.urlsafe_b64encode(d).decode().rstrip("=")
+
+
+def service_identity(key: VirtualKey) -> str:
+    if key.kind == "team":
+        return f"svc-{_slug(key.team)}@td.com"
+    assert key.user is not None
+    return key.user.email
 
 
 def build_org(seed: int = 42) -> Org:
@@ -89,25 +114,20 @@ def build_org(seed: int = 42) -> Org:
     team_names = list(teams)
 
     tools: list[Tool] = (
-        ["copilot"] * N_COPILOT + ["claude-code"] * N_CODE + ["claude-desktop"] * N_DESKTOP
+        ["copilot"] * N_COPILOT + ["vscode"] * N_VSCODE
+        + ["claude-code"] * N_CODE + ["claude-desktop"] * N_DESKTOP
     )
     rng.shuffle(tools)
-    copilot_idx = [i for i, t in enumerate(tools) if t == "copilot"]
-    byok = set(rng.sample(copilot_idx, N_BYOK))
-
-    def persona(tool: Tool) -> Persona:
-        if tool == "claude-code":
-            return rng.choices(["power", "regular"], weights=[80, 20])[0]
-        if tool == "copilot":
-            return rng.choices(["light", "regular", "power"], weights=[50, 40, 10])[0]
-        return "regular"
+    pools = {t: list(p) for t, p in PERSONAS.items()}
+    for p in pools.values():
+        rng.shuffle(p)
 
     users: list[User] = []
     for i, name in enumerate(NAMES):
         team = team_names[i % len(team_names)]  # round-robin: every team used
         first, last = name.lower().split(" ", 1)
         email = f"{first}.{_slug(last).replace('-', '.')}@td.com"
-        users.append(User(email, name, teams[team], team, tools[i], persona(tools[i]), i in byok))
+        users.append(User(email, name, teams[team], team, tools[i], pools[tools[i]].pop()))
 
     keys: list[VirtualKey] = []
     for i, u in enumerate(users):
@@ -117,7 +137,12 @@ def build_org(seed: int = 42) -> Org:
             assigned.append(other)
         for proj in assigned:
             kid = f"vk-{u.email.split('@')[0]}-{_slug(proj)}"
-            secret = "td-" + hashlib.sha256(f"{seed}:{kid}".encode()).hexdigest()[:40]
-            keys.append(VirtualKey(kid, secret, u, proj))
+            keys.append(VirtualKey(kid, _secret(seed, kid), "personal", u.team, u.group, proj, u, u.tool))
+
+    # Shared team keys: headless Claude Code in CI, no user.
+    for j, team in enumerate(rng.sample(team_names, N_TEAM_KEYS)):
+        kid = f"vk-team-{_slug(team)}"
+        keys.append(VirtualKey(kid, _secret(seed, kid), "team", team, teams[team],
+                               PROJECTS[(j * 5 + 2) % len(PROJECTS)], None, "claude-code"))
 
     return Org("TD", "td.com", groups, teams, list(PROJECTS), users, keys)
