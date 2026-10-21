@@ -32,12 +32,25 @@ class FakeKube:
 
 
 class FakeCH:
-    """ClickHouse stand-in for run_sync: the marker spans 'arrive' once sent, purge_td records its predicate."""
+    """ClickHouse stand-in for run_sync: the marker spans 'arrive' once sent, purge_td records its predicate.
+    Ordinary (non-marker) requests sent by the tool count as live TD spend recorded in ClickHouse."""
 
-    def __init__(self, sent):
+    def __init__(self, sent, history_end=NOW + timedelta(days=1), live_extra=None):
         self.sent = sent
         self.purges = []
         self.counts = []
+        self.history_end = history_end
+        self.live_extra = live_extra or {}
+
+    def td_history_end(self, window_start, exclude=None):
+        return self.history_end
+
+    def td_live_spend_by_team(self, window_start, exclude=None):
+        out = defaultdict(float, self.live_extra)
+        for r in self.sent:
+            if r.user_agent != bs.MARKER_UA:
+                out[r.key.team] += float(cost(r, RATES)["total"])
+        return dict(out)
 
     def count_td(self, predicate=None):
         self.counts.append(predicate)
@@ -73,9 +86,9 @@ def is_marker(r):
     return r.user_agent == bs.MARKER_UA
 
 
-def run(counters_before, sender=None, now=NOW, start=None, purge=True, stale=None):
-    sent = []
-    ch = FakeCH(sent)
+def run(counters_before, sender=None, now=NOW, start=None, purge=True, stale=None, sent=None, ch=None):
+    sent = [] if sent is None else sent
+    ch = ch or FakeCH(sent)
 
     @contextlib.contextmanager
     def open_ch():
@@ -133,8 +146,9 @@ def test_sync_subtracts_counters_and_closes_the_gap():
         if team == "Fraud Strategy":
             assert after[name]["after"] > target[name]
             continue
-        # counter after the markers (before the closing refresh request) == the history target
-        assert after[name]["after"] - last_refresh[team] == pytest.approx(target[name], rel=1e-4, abs=0.01)
+        # counter after the markers (before the closing refresh request) == generated + recorded live spend
+        assert after[name]["after"] - last_refresh[team] == pytest.approx(after[name]["target"], rel=1e-4, abs=0.01)
+        assert after[name]["target"] > target[name]          # the refresh before reading is live spend
     assert {r["name"] for r in rows} == set(target)
 
 
@@ -266,8 +280,10 @@ def test_sync_refreshes_budget_page_before_and_after():
     assert all(is_marker(r) for r in sent[teams:-teams])
     # gaps came from the true counters, not the stale zeros: nothing is charged twice
     marker_usd = float(sum(cost(r, RATES)["total"] for r in sent if is_marker(r)))
-    refresh_usd = float(sum(cost(r, RATES)["total"] for r in first))
-    assert marker_usd == pytest.approx(target[org_budget_name("TD")] * 0.5 - refresh_usd, rel=1e-3)
+    # refresh spend is live spend (recorded, in both target and counter), so markers close exactly the
+    # generated half that the counters lack; at most MIN_GAP per team is skipped
+    half = target[org_budget_name("TD")] * 0.5
+    assert half - len(ORG.teams) * bs.MIN_GAP <= marker_usd <= half + 0.01
 
 
 def test_sync_fails_when_budget_page_never_catches_up():
@@ -277,3 +293,50 @@ def test_sync_fails_when_budget_page_never_catches_up():
                     sender=lambda r, b: sent.append(r) or 200, read_counters=lambda: {},
                     open_clickhouse=None, log=lambda m: None, sleep=lambda s: None)
     assert not any(is_marker(r) for r in sent)                    # no markers on unconfirmed counters
+
+
+def test_sync_is_idempotent():
+    """Second run in a row: only the refresh requests' own (live, recorded) spend changes; ~0 marker spend."""
+    start = NOW - timedelta(hours=5)
+    sent = []
+    ch = FakeCH(sent)
+    base = {}
+    run(base, start=start, sent=sent, ch=ch)
+    first = len([r for r in sent if is_marker(r)])
+    assert first > 0
+    n = len(sent)
+    rows, _, _ = run(base, start=start, sent=sent, ch=ch)
+    second = [r for r in sent[n:] if is_marker(r)]
+    assert second == []
+    target = bs.history_targets(ORG, RATES, start, NOW, seed=42)
+    live = ch.td_live_spend_by_team(start)
+    for team in ORG.teams:
+        name = team_budget_name(team)
+        row = next(r for r in rows if r["name"] == name)
+        assert row["target"] == pytest.approx(target[name] + live[team], abs=0.01)
+        assert row["after"] == pytest.approx(row["target"], abs=2.0)
+
+
+def test_sync_target_adds_live_spend_and_ends_history_at_backfill():
+    start = NOW - timedelta(hours=6)
+    end = NOW - timedelta(hours=2)
+    sent = []
+    ch = FakeCH(sent, history_end=end, live_extra={"Fraud Strategy": 40.0})
+    rows, _, _ = run({}, start=start, sent=sent, ch=ch)
+    gen = bs.history_targets(ORG, RATES, start, end, seed=42)
+    first = sent[:len(ORG.teams)]                      # the refresh before reading: recorded live spend
+    live = defaultdict(float, {"Fraud Strategy": 40.0})
+    for r in first:
+        live[r.key.team] += float(cost(r, RATES)["total"])
+    name = team_budget_name("Fraud Strategy")
+    row = next(r for r in rows if r["name"] == name)
+    assert row["target"] == pytest.approx(gen[name] + live["Fraud Strategy"], abs=0.01)
+    org = next(r for r in rows if r["name"] == org_budget_name("TD"))
+    assert org["target"] == pytest.approx(gen[org_budget_name("TD")] + sum(live.values()), abs=0.01)
+
+
+def test_sync_skips_gaps_under_one_dollar():
+    assert bs.MIN_GAP == 1.0
+    reqs = bs.plan_requests(ORG, RATES, {"Fraud Strategy": 0.99, "Retail Deposits": 1.5},
+                            {"Fraud Strategy": {"bedrock-opus": 1.0}, "Retail Deposits": {"azure-gpt": 1.0}}, NOW)
+    assert {r.key.team for r in reqs} == {"Retail Deposits"}

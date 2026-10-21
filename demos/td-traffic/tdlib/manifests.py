@@ -13,7 +13,7 @@ from .pricing import Rates
 from .usage import CLIENT_OTHER, CLIENT_RULES, MODELS, cost, generate
 
 __all__ = ["BUDGET", "CLIENT_RULES", "DIMENSIONS_FILE", "HOSTNAME", "NAMESPACE", "LABELS", "render_all",
-           "plan_budgets", "projected_spend", "render_dimensions_values", "client_cel", "budget_entry_names"]
+           "plan_budgets", "window_spend", "budget_window", "render_dimensions_values", "client_cel", "budget_entry_names"]
 
 NAMESPACE = "td-demo"
 LABELS = {"demo": "td"}
@@ -24,7 +24,6 @@ KEYS_SECRET = "td-virtual-keys"
 POLICY = "td-apikey"
 BUDGET = "td-budgets"
 DIMENSIONS_FILE = Path(__file__).resolve().parents[1] / "values-dimensions.yaml"
-HISTORY_DAYS = 30
 
 
 def _meta(name: str, namespace: str | None = NAMESPACE, **labels: str) -> dict:
@@ -74,28 +73,34 @@ budgetDimensions:
 
 # ---------------------------------------------------------------- budgets
 
-def projected_spend(org: Org, rates: dict[tuple[str, str], Rates], seed: int,
-                    now: datetime | None = None) -> dict[str, dict[str, float]]:
-    """Projected calendar-month (UTC) USD per team / group / organization.
+# The gateway's `window: {unit: Month}` is a fixed 30-day period aligned to the Unix epoch, NOT the calendar
+# month (NOTES.md "Budget counters"): on omni-viper on 2026-10-21 the Redis counter key suffix was
+# 1791072000 = 2026-10-04 00:00 UTC = 691 x 2,592,000 s, with a ~30-day TTL.
+BUDGET_WINDOW = timedelta(days=30)
 
-    = generated spend since the 1st of this month (within the HISTORY_DAYS window ending now)
-      + remaining days of the month x the window's average daily spend.
+
+def budget_window(now: datetime | None = None) -> tuple[datetime, datetime]:
+    """[start, end) of the gateway's current `Month` budget window: floor(unix / 2,592,000) x 2,592,000 (UTC)."""
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    w = int(BUDGET_WINDOW.total_seconds())
+    secs = int(now.timestamp())
+    start = datetime.fromtimestamp(secs - secs % w, tz=timezone.utc)
+    return start, start + BUDGET_WINDOW
+
+
+def window_spend(org: Org, rates: dict[tuple[str, str], Rates], seed: int,
+                 now: datetime | None = None) -> dict[str, dict[str, float]]:
+    """Generated (same seed as backfill) USD per team / group / organization over [budget window start, now).
+
+    This is what the gateway's budget counters hold right after `backfill` + `sync-budgets`.
     """
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    start = now - timedelta(days=HISTORY_DAYS)
-    month0 = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    month1 = (month0 + timedelta(days=32)).replace(day=1)
-    remaining_days = (month1 - now) / timedelta(days=1)
-    window: dict[str, float] = defaultdict(float)
-    mtd: dict[str, float] = defaultdict(float)
+    start, _ = budget_window(now)
+    team: dict[str, float] = defaultdict(float)
     for r in generate(org, start, now, seed):
-        if r.status != 200:
-            continue
-        c = float(cost(r, rates)["total"])
-        window[r.key.team] += c
-        if r.ts >= month0:
-            mtd[r.key.team] += c
-    team = {t: mtd[t] + remaining_days * window[t] / HISTORY_DAYS for t in org.teams}
+        if r.status == 200:
+            team[r.key.team] += float(cost(r, rates)["total"])
+    team = {t: team[t] for t in org.teams}
     group = {g: 0.0 for g in org.groups}
     for t, v in team.items():
         group[org.teams[t]] += v
@@ -135,11 +140,13 @@ def _entry(name: str, subject: dict[str, str], amount: int) -> dict:
 
 def plan_budgets(org: Org, rates: dict[tuple[str, str], Rates], seed: int,
                  now: datetime | None = None) -> list[dict]:
-    """21 monthly Audit USD budgets: 1 org, 5 groups, 15 teams.
+    """21 monthly Audit USD budgets: 1 org, 5 groups, 15 teams, sized on window-to-date spend.
 
-    Teams: 2 projected over 100%, 2 at 85-95%, the rest under 75%. Groups and org: 60-90%.
+    Against `window_spend` (what the counters hold after backfill + sync-budgets): teams 2 at 100-130%,
+    2 at 85-95%, the rest under 75%; groups and org 60-90%. Re-planned on every `up` / `replan-budgets`;
+    the ratios drift as the window advances, so re-plan after the window rolls over.
     """
-    proj = projected_spend(org, rates, seed, now)
+    proj = window_spend(org, rates, seed, now)
     rng = random.Random(seed)
     ranked = sorted(org.teams, key=lambda t: -proj["team"][t])
     over = rng.sample(ranked[:5], 2)
@@ -154,7 +161,7 @@ def plan_budgets(org: Org, rates: dict[tuple[str, str], Rates], seed: int,
         for t in (t for t in org.teams if org.teams[t] == g):
             p = proj["team"][t]
             if t in over:
-                amount = _limit(p, rng.uniform(1.12, 1.28), 1.05, 1.35)
+                amount = _limit(p, rng.uniform(1.08, 1.20), 1.02, 1.28)
             elif t in near:
                 amount = _limit(p, rng.uniform(0.88, 0.92), 0.86, 0.94)
             else:

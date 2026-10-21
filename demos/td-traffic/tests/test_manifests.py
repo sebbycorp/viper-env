@@ -1,11 +1,11 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
 from tdlib.manifests import (
-    CLIENT_RULES, DIMENSIONS_FILE, plan_budgets, projected_spend, render_all, render_dimensions_values,
+    CLIENT_RULES, DIMENSIONS_FILE, budget_window, plan_budgets, render_all, render_dimensions_values, window_spend,
 )
 from tdlib.org import build_org, service_identity
 from tdlib.pricing import load_rates
@@ -29,7 +29,7 @@ def rates():
 
 @pytest.fixture(scope="module")
 def projection(org, rates):
-    return projected_spend(org, rates, SEED, now=NOW)
+    return window_spend(org, rates, SEED, now=NOW)
 
 
 @pytest.fixture(scope="module")
@@ -101,19 +101,49 @@ def test_budgets_cover_teams_groups_org(org, objs, budgets):
     assert all(len(s) == 1 for s in subjects)
 
 
-def test_budget_mix(budgets, projection):
+def _mix_ok(budgets, spend):
     pct = {}
     for e in budgets:
         (dim, val), = e["subject"].items()
-        pct[(dim, val)] = float(projection[dim][val]) / e["limit"]["amount"]
+        pct[(dim, val)] = float(spend[dim][val]) / e["limit"]["amount"]
     team = [p for (d, _), p in pct.items() if d == "team"]
     assert len(team) == 15
-    assert 1 <= sum(p > 1.0 for p in team) <= 2
-    assert sum(0.85 <= p <= 0.95 for p in team) == 2
-    assert sum(p < 0.75 for p in team) == 15 - sum(p > 1.0 for p in team) - 2
-    for (d, _), p in pct.items():
+    over = sum(1.0 <= p <= 1.30 for p in team)
+    assert 1 <= over <= 2, sorted(team)
+    assert sum(0.85 <= p <= 0.95 for p in team) == 2, sorted(team)
+    assert sum(p < 0.75 for p in team) == 15 - over - 2, sorted(team)
+    for (d, v), p in pct.items():
         if d in ("group", "organization"):
-            assert 0.60 <= p <= 0.90, (d, p)
+            assert 0.60 <= p <= 0.90, (d, v, p)
+
+
+def test_budget_mix(budgets, projection):
+    _mix_ok(budgets, projection)
+
+
+# Window-to-date spend, 1 / 6.5 / 17.6 / 29 days into the gateway's epoch-aligned 30-day window.
+WINDOW0 = datetime(2026, 10, 4, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize("days", [1, 6.5, 17.6, 29])
+def test_budget_mix_window_to_date(org, rates, days):
+    now = WINDOW0 + timedelta(days=days)
+    _mix_ok(plan_budgets(org, rates, SEED, now=now), window_spend(org, rates, SEED, now=now))
+
+
+def test_budget_window_matches_gateway():
+    # omni-viper 2026-10-21: Month counter key suffix 1791072000 = 2026-10-04 00:00 UTC, TTL ~30 days.
+    assert budget_window(NOW) == (WINDOW0, WINDOW0 + timedelta(days=30))
+    assert int(budget_window(NOW)[0].timestamp()) == 1791072000
+    assert budget_window(datetime(2026, 11, 3, tzinfo=timezone.utc))[0] == datetime(2026, 11, 3, tzinfo=timezone.utc)
+
+
+def test_window_spend_is_generated_window_to_date(org, rates):
+    from tdlib.usage import cost, generate
+    now = WINDOW0 + timedelta(hours=8)
+    spend = window_spend(org, rates, SEED, now=now)
+    total = sum(float(cost(r, rates)["total"]) for r in generate(org, WINDOW0, now, SEED) if r.status == 200)
+    assert spend["organization"]["TD"] == pytest.approx(total, abs=1e-6)
 
 
 def test_projection_is_consistent(org, projection):

@@ -248,3 +248,21 @@ def test_cli_live_passes_options(monkeypatch):
     assert td.main(["live", "--context", "CTX", "--duration", "5m", "--speed", "2", "--concurrency", "3"]) == 0
     assert got["context"] == "CTX" and got["duration"] == 300 and got["speed"] == 2 and got["concurrency"] == 3
     assert got["rates"]
+
+
+def test_cli_replan_budgets_applies_only_budgets(monkeypatch):
+    from test_backfill import load_td
+    td = load_td()
+    applied = []
+
+    class K:
+        def __init__(self, ctx):
+            self.context = ctx
+
+        def apply(self, objs):
+            applied.extend(objs)
+            return ""
+    monkeypatch.setattr(td, "Kube", K)
+    assert td.main(["replan-budgets", "--context", "CTX"]) == 0
+    assert [o["kind"] for o in applied] == ["EnterpriseAgentgatewayBudget"]
+    assert len(applied[0]["spec"]["budgets"]) == 21

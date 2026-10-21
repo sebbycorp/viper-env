@@ -418,16 +418,22 @@ Checked on omni-viper on 2026-10-21, right after a 30-day backfill of 559,202 TD
   `charged_micro_usd` path), not from spans. Writing spans, and the
   `agw.ai.budgets.*` attributes inside them, does not move it. The budget counters are
   **not** faked (ruling).
-- **Correction (Task 8):** the counters live in Redis, but the page *reads* them from ClickHouse:
-  see "Budget counters: where they live and how the page reads them" below. The $1.37 above was the
-  latest `current_usage` in a surviving outcome span, not a direct counter read.
+- **Correction (Task 8): the conclusion above is only half right.** The counters live in **Redis**
+  (ext-cache), not in ClickHouse. But the Budgets page reads `spent` from ClickHouse: it takes the
+  **latest `agw.ai.budgets.outcome` span** (`current_usage`) per entry. The $1.37 was the
+  `current_usage` in the newest surviving outcome span. After the Task 7 purge removed those outcome
+  spans, the page showed 0 although Redis still held 1,370,512 µUSD.
+  - **Every TD purge** (`down --purge-history`, `backfill --replace`, the sync marker purge) is trace-level,
+    so it removes outcome spans. The page then needs **one request per team** to show the counters again.
+    `sync-budgets` sends these requests itself, before reading and after its markers.
+  - Details are in the next section.
 
 What this means for the demo:
 - Right after `up` + `backfill`, every budget shows about 0% used, even though the 30-day
   cost graphs show tens of thousands of dollars. The planned mix (2 over, 2 near, the rest
   under) only appears once enough **live** traffic has passed through the gateway in the
   current calendar month.
-- `plan_budgets` sizes limits from the projected *full-month* spend (history + forecast).
+- (Superseded in Task 8 fix round 1: `plan_budgets` now sizes limits on window-to-date spend; see below.) Originally `plan_budgets` sized limits from the projected *full-month* spend (history + forecast).
   Live traffic alone will not get close to those limits during a demo. The README (Task 9)
   must say this. Two ways to get "over/near" budgets on demo day: size limits on
   expected live spend (e.g. a few dollars for the over/near teams), or show the per-team
@@ -487,7 +493,7 @@ Checked on omni-viper on 2026-10-21 (ext-cache Redis, ClickHouse `system.query_l
 - `td.py sync-budgets --context C [--dry-run]`:
   1. Sends one ordinary request per team, so the page is current.
   2. Reads ListBudgets.
-  3. Computes targets: generated spend (`generate`, seed 42) over [budget window start, now) per team.
+  3. Computes targets: generated spend (`generate`, seed 42) over [budget window start, backfill end) per team, plus live TD spend recorded in ClickHouse (fix round 1).
      Group and org targets are sums.
   4. Plans per-team gaps as ≤ 20 marker requests per team, each ≤ 250k input tokens, on bedrock-opus /
      azure-gpt in the team's Opus vs. other spend share. When the gap exceeds 20 plausible requests,
@@ -497,9 +503,17 @@ Checked on omni-viper on 2026-10-21 (ext-cache Redis, ClickHouse `system.query_l
      `url.path` but not the raw user agent, so the marker is the path segment `/td-budget-sync`;
      the UA `td-budget-sync/1.0` is sent too.
   7. Prints the table.
-- **Run it once after `backfill`** (and again after a new backfill or a window reset). Re-running later
-  adds the generated spend since the previous run, although ClickHouse history ended at the backfill.
-  Spend from `live` in between is real and already counted.
+- **Idempotent (fix round 1).**
+  - target = generated spend over [window start, **backfill end**) + **live TD spend recorded in
+    ClickHouse** in the window.
+  - The backfill end is the newest successful TD LLM span without an outcome span.
+  - Live spend means TD LLM spans whose trace has an outcome span: `live`, the refresh requests and
+    earlier checks. Markers are excluded.
+  - Gaps < $1 are skipped.
+  - The refresh requests are live spend, so they land in both the counter and the target. A second run
+    sends 0. Verified live: two runs in a row, both 0 marker requests (`fix1-sync-1.log`, `fix1-sync-2.log`).
+- Today's counters are about $145 above that target. My pre-fix run targeted history up to `now`
+  (15:17) instead of the backfill end (14:37). They will stay above the target until the window resets.
 - First sync on 2026-10-21 15:05 UTC: 300 marker requests, $28,911.32. Counters equal targets to the cent.
   The purge verified 152 real keys identical. A tool-independent check (`task-8-work/hand_totals.py`)
   found all non-marker totals identical. The only rollup change was the earlier probe marker
@@ -507,11 +521,35 @@ Checked on omni-viper on 2026-10-21 (ext-cache Redis, ClickHouse `system.query_l
 - Counters vs. ClickHouse TD spend in the same window (2026-10-04 → now): $28,990 vs. $28,746
   (+0.8%; per team ±3%). The difference is RNG noise between the regenerated history and the backfilled
   one, plus the generated spend after the backfill ended.
-- **Budget mix after sync (the limits from `plan_budgets` are unchanged):** org 40.8%, groups
+- **Before fix round 1** (limits sized on the projected calendar month) the mix after sync was: org 40.8%, groups
   38.9–47.2%, teams 20.0–73.3%. That is 0 over and 0 near. `plan_budgets` sizes limits on the
   *projected full calendar month*, while the counter holds the epoch-aligned 30-day window to date
   (17.6 of 30 days on 10-21). The planned "2 over / 2 near / groups 60–90%" is not reachable on honest
   window-to-date spend. Changing limits is a controller decision (Task 8 NEEDS_CONTEXT).
+- **Ruling (option a), implemented:** `plan_budgets` sizes limits on **window-to-date generated spend**
+  (`manifests.window_spend`, same seed as the backfill) over the gateway's real window
+  (`manifests.budget_window`).
+  - **Formula:** `start = floor(unix_now / 2,592,000) × 2,592,000` UTC, `end = start + 30 days`.
+  - **Evidence:**
+    - The Redis key suffix on 2026-10-21 is `1791072000`, i.e. 2026-10-04 00:00 UTC (= 691 × 2,592,000).
+    - Counter TTL ≈ 30 d and outcome spans carry `reset_after_ms: 2592000000`.
+    - The UI labels the window "Monthly (30 days)" / "Rolling window".
+  - **Ratios:**
+    - over teams: target 1.08–1.20, allowed 1.02–1.28
+    - near teams: 0.88–0.92, allowed 0.86–0.94
+    - the rest: ≤ 0.74
+    - groups / org: 0.61–0.89
+    - Tested at 1, 6.5, 17.6 and 29 days into a window.
+  - **Re-planning:** happens on every `up`, or with `td.py replan-budgets --context C`, which applies only
+    the budget object. Re-applying the budget object with new limits kept the same Redis counter keys,
+    so the counters are preserved. `status` prints the window and the next rollover.
+  - **After the window rolls over:** re-run `up` (or `replan-budgets`), `backfill --replace` and `sync-budgets`.
+- **Result on omni-viper 2026-10-21 15:30 UTC** (`up` → `sync-budgets` twice; `fix1-sync-1.log`,
+  `t8-fix1-ui-budgets.png`):
+  - teams over: Fraud Strategy 109.9%, Credit Cards & Lending 108.2%
+  - teams near: Capital Markets Data 91.6%, Digital Channels 87.5%
+  - other teams: 20.0–63.2%
+  - groups: 66.1–82.6%; org: 72.5%
 
 ## Backfill and purge (Task 7)
 

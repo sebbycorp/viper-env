@@ -4,7 +4,7 @@
 # ///
 """TD Bank synthetic AI-assistant traffic for the Solo Enterprise agentgateway UI.
 
-    uv run demos/td-traffic/td.py {up,backfill,sync-budgets,live,down,status} --context <kube-context>
+    uv run demos/td-traffic/td.py {up,backfill,sync-budgets,live,replan-budgets,down,status} --context <kube-context>
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from tdlib import budget_sync, live  # noqa: E402
 from tdlib.clickhouse import SPANS_TABLE, ClickHouse, ClickHouseError  # noqa: E402
 from tdlib.kube import Kube, KubeError  # noqa: E402
 from tdlib.manifests import (  # noqa: E402
-    DIMENSIONS_FILE, LABELS, MOCK, NAMESPACE, plan_budgets, render_all,
+    DIMENSIONS_FILE, LABELS, MOCK, NAMESPACE, budget_window, plan_budgets, render_all,
 )
 from tdlib.org import build_org  # noqa: E402
 from tdlib.pricing import load_rates  # noqa: E402
@@ -123,8 +123,7 @@ def cmd_up(kube: Kube, args) -> int:
         log("nothing changed")
         return 1
     org = build_org()
-    log("planning budgets from the generated 30-day history ...")
-    budgets = plan_budgets(org, load_rates(RATES_PATH), args.seed)
+    budgets = planned_budgets(org, args.seed)
     objs = render_all(org, budgets, MOCK_SOURCE.read_text())
     kube.apply(objs[:1])                       # namespace, so the saved values can live in it
     save_values_once(kube)
@@ -135,6 +134,26 @@ def cmd_up(kube: Kube, args) -> int:
     log(f"helm upgrade {RELEASE} {version} with {DIMENSIONS_FILE.name} (proxy picks it up in ~60s)")
     kube.run(["rollout", "status", f"deployment/{MOCK}", "-n", NAMESPACE, "--timeout=180s"])
     log("up: done")
+    return 0
+
+
+def planned_budgets(org, seed: int) -> list[dict]:
+    start, end = budget_window()
+    log(f"planning budgets on window-to-date spend: gateway budget window {start:%Y-%m-%d %H:%M} .. "
+        f"{end:%Y-%m-%d %H:%M} UTC (re-plan after it rolls over)")
+    return plan_budgets(org, load_rates(RATES_PATH), seed)
+
+
+def cmd_replan_budgets(kube: Kube, args) -> int:
+    """Re-apply only the budget object, with limits planned for the current window."""
+    org = build_org()
+    budgets = planned_budgets(org, args.seed)
+    objs = [o for o in render_all(org, budgets, MOCK_SOURCE.read_text())
+            if o["kind"] == "EnterpriseAgentgatewayBudget"]
+    kube.apply(objs)
+    for b in budgets:
+        log(f"  {b['name']:45} {b['limit']['amount']:>8,} USD")
+    log(f"replan-budgets: applied {len(budgets)} budgets; run `sync-budgets` so the page reflects the counters")
     return 0
 
 
@@ -215,6 +234,10 @@ def cmd_status(kube: Kube, args) -> int:
         counts[kind] = counts.get(kind, 0) + 1
     log("TD objects in " + NAMESPACE + ": " + (", ".join(f"{k}={v}" for k, v in sorted(counts.items())) or "none"))
     log(f"saved Helm values: {'present' if saved_values(kube) is not None else 'absent'}")
+    start, end = budget_window()
+    log(f"budget window (gateway `Month`, epoch-aligned 30 days): {start:%Y-%m-%d %H:%M} .. {end:%Y-%m-%d %H:%M} UTC; "
+        f"next rollover {end:%Y-%m-%d %H:%M} UTC -> then re-run `up` (or `replan-budgets`), `backfill --replace`, "
+        f"`sync-budgets`")
     try:
         log(f"TD span rows in ClickHouse: {td_span_count(kube)}")
     except (KubeError, ClickHouseError, OSError, ValueError) as e:
@@ -248,12 +271,13 @@ def main(argv: list[str] | None = None) -> int:
         ("sync-budgets", cmd_sync_budgets,
          "top up the gateway budget counters to the generated history (marker spans purged afterwards)"),
         ("live", cmd_live, "send live TD traffic through the gateway (Ctrl-C stops)"),
+        ("replan-budgets", cmd_replan_budgets, "re-apply only the budgets, sized for the current budget window"),
     ]:
         p = sub.add_parser(name, help=hlp)
         p.add_argument("--context", required=True, help="kube context (required; the current one is never used)")
         p.set_defaults(fn=fn)
-        if name == "up":
-            p.add_argument("--seed", type=int, default=SEED, help="budget projection seed")
+        if name in ("up", "replan-budgets"):
+            p.add_argument("--seed", type=int, default=SEED, help="budget planning seed (same as backfill)")
         if name == "backfill":
             p.add_argument("--days", type=float, default=BACKFILL_DAYS,
                            help=f"history length ending now (default {BACKFILL_DAYS})")
