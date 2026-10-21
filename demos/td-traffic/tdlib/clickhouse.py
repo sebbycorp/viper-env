@@ -121,20 +121,20 @@ class ClickHouse:
 
     # ------------------------------------------------------------ insert
     def insert_rows(self, table: str, rows: Iterable[dict], batch: int = 20_000,
-                    progress: Callable[[int], None] | None = None) -> int:
+                    progress: Callable[[int], None] | None = None, attempts: int = 8) -> int:
         """Stream `rows` as gzip JSONEachRow batches. Returns the number of rows sent."""
         buf: list[str] = []
         total = 0
         for r in rows:
             buf.append(json.dumps(r, separators=(",", ":"), default=str))
             if len(buf) >= batch:
-                self._insert_batch(table, buf)
+                self._insert_batch(table, buf, attempts)
                 total += len(buf)
                 buf = []
                 if progress:
                     progress(total)
         if buf:
-            self._insert_batch(table, buf)
+            self._insert_batch(table, buf, attempts)
             total += len(buf)
             if progress:
                 progress(total)

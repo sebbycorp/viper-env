@@ -95,7 +95,7 @@ def created_at(obj: dict) -> datetime:
 
 
 def write_budget_outcomes(ch, kube, targets: dict[str, int], now: datetime, *, created: datetime | None = None,
-                          cluster: str | None = None) -> None:
+                          cluster: str | None = None, attempts: int = 8) -> None:
     """Insert outcome rows setting every entry in `targets`, ENTRIES_PER_ROW entries per row.
 
     Dated max(now - 1s, creation + 1s): the page ignores rows before the budget's `creationTimestamp`
@@ -108,7 +108,7 @@ def write_budget_outcomes(ch, kube, targets: dict[str, int], now: datetime, *, c
     items = list(targets.items())
     rows = [outcome_row(dict(items[i:i + ENTRIES_PER_ROW]), ts, BUDGET_REF, cluster)
             for i in range(0, len(items), ENTRIES_PER_ROW)]
-    ch.insert_rows(SPANS_TABLE, rows)
+    ch.insert_rows(SPANS_TABLE, rows, attempts=attempts)
 
 
 def read_budget_usage(ch, since: datetime) -> dict[str, int]:

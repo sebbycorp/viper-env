@@ -14,23 +14,33 @@ Prerequisites on your laptop:
 - A kube context for a cluster that runs Solo Enterprise agentgateway (a Gateway, default
   `agentgateway-proxy`) and the Solo UI (management chart, with its ClickHouse).
 
-```bash
-curl -LO https://github.com/sebbycorp/viper-env/releases/latest/download/td-traffic.pyz
+Download the tool (the repo is private, so use `gh` with repo access):
 
-python3 td-traffic.pyz demo   --context <ctx>   # one-time setup, ~10 min, then it exits
-python3 td-traffic.pyz live   --context <ctx>   # keeps running until Ctrl-C
-python3 td-traffic.pyz status --context <ctx>   # object and span counts, budget window
-python3 td-traffic.pyz down --purge-history --context <ctx>   # remove everything
+```bash
+gh release download -R sebbycorp/viper-env --pattern td-traffic.pyz
+# if the repo is public, this works too:
+# curl -fLO https://github.com/sebbycorp/viper-env/releases/latest/download/td-traffic.pyz
 ```
+
+Run it. This form works on stock macOS (its `python3` is 3.9):
+
+```bash
+uv run --python 3.12 python td-traffic.pyz demo   --context <ctx>   # one-time setup, ~10 min, then it exits
+uv run --python 3.12 python td-traffic.pyz live   --context <ctx>   # keeps running until Ctrl-C
+uv run --python 3.12 python td-traffic.pyz status --context <ctx>   # object and span counts, budget window
+uv run --python 3.12 python td-traffic.pyz down --purge-history --context <ctx>   # remove everything
+```
+
+With Python 3.11+ installed, `python3 td-traffic.pyz <command> --context <ctx>` does the same.
 
 - `demo` is the one-time setup: it creates the config (keys, budgets, routes, dimensions), writes
   30 days of history into ClickHouse, and sets the Budgets page. It prints the Solo UI address
   and exits. Run it once per cluster (it replaces any earlier TD history).
 - `live` runs until Ctrl-C (or `--duration 2h`). Every few seconds it writes fresh spans into
   ClickHouse, and about every minute it nudges the budgets, so the Traces, Cost Management and
-  Budgets pages keep moving. Start it about 10 minutes before the demo.
-- Every command needs `--context <ctx>`; the current context is never used. If `python3 --version` is older than 3.11 (macOS ships 3.9),
-  use `uv run --python 3.12 python td-traffic.pyz <command> ...` instead. The first run unpacks the tool to
+  Budgets pages keep moving. Start it about 10 minutes before the demo. Stop `live` (Ctrl-C) before running `demo`,
+  `backfill --replace` or `down`.
+- Every command needs `--context <ctx>`; the current context is never used. The first run unpacks the tool to
   `~/.cache/td-traffic/` (set `TD_TRAFFIC_CACHE` to change it).
 
 If your release, namespace or Gateway names differ, pass `--release`, `--namespace` (where the
@@ -152,8 +162,8 @@ recovery commands.
 ## Cleanup
 
 ```bash
-python3 td-traffic.pyz down --context <ctx>                  # keep history
-python3 td-traffic.pyz down --context <ctx> --purge-history  # remove everything
+uv run --python 3.12 python td-traffic.pyz down --context <ctx>                  # keep history
+uv run --python 3.12 python td-traffic.pyz down --context <ctx> --purge-history  # remove everything
 ```
 
 Platform details and verified behavior are in [NOTES.md](NOTES.md). Tests:

@@ -89,7 +89,7 @@ class FakeCH:
     def cluster_name(self, default):
         return "omni-viper"
 
-    def insert_rows(self, table, rows, batch=20_000, progress=None):
+    def insert_rows(self, table, rows, batch=20_000, progress=None, attempts=8):
         rows = list(rows)
         self.inserts.append((table, rows))
         return len(rows)

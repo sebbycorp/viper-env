@@ -398,81 +398,10 @@ input + output (48,213 + 1,873). For USD-only budgets, the value of `unit` is pr
   `agw.ai.budgets.applied=true`, `count=2`, `ids=["td-demo/td-spike-budget/<name>",…]`
   and `action_taken=AUDIT`. Over-limit requests still return 200.
 - `notifications[]` (Slack/Webhook) also exists but was not used.
-- Budget spend counts only traffic that passes through the gateway. Backfilled spans
-  show in the cost graphs but do **not** count toward budget `spent`. **Verified in Task 7**
-  (see "Budgets and backfilled history" below).
+- The gateway's own counters (Redis) count only traffic that passes through it, but the Budgets page
+  shows ClickHouse `agw.ai.budgets.outcome` rows, which the tool writes itself (see "Budgets: how the
+  page reads ClickHouse (v2)" below).
 
-## Budgets: how the page reads ClickHouse (v2)
-
-Verified on omni-viper (2026-10-21; `AgentgatewayCostAPI/ListBudgets`, ClickHouse `system.query_log`).
-- **The Budgets page reads ClickHouse, not the gateway's Redis counters.** For every entry
-  `<namespace>/<budget>/<entry>` it takes the newest `current_usage` (`argMaxIf(current_usage, Timestamp)`)
-  among `agw.ai.budgets.outcome` spans with `phase = 'final_debit_result'`, from
-  `platformdb.otel_traces_json` (`SpanAttributes.agw.ai.budgets.statuses[].{id, current_usage}`; USD entries
-  are in micro-USD, Tokens entries in tokens).
-- **Time range: the budget object's `metadata.creationTimestamp`** up to now (not the `Enforced` condition
-  time, as an earlier note said). Rows dated before it, or in the future, are ignored. `up` re-creates the
-  budget, so every `up` moves the start forward.
-- Consequence: writing zero-cost outcome rows with the wanted `current_usage`, dated just after the budget's
-  creation and just before now, sets what the page shows. No request goes through the gateway. The Redis
-  counters (store: ext-cache, one key per entry and window) are left alone, so they differ from the page.
-  `td.py sync-budgets` does this once; `live` repeats it about every 60 s with the generated window spend
-  plus what `live` wrote.
-- Window: `window: {unit: Month}` is a fixed 30-day period aligned to the Unix epoch, not the calendar month
-  (2026-10-04 00:00 UTC to 2026-11-03 00:00 UTC on 2026-10-21); `Day` is aligned the same way. `status` prints
-  the next rollover; after it re-run `replan-budgets`, `backfill --replace` and `sync-budgets`.
-- Purges delete outcome rows too, so the Budgets page is empty until the next `sync-budgets` (or the first
-  `live` refresh, within a minute).
-- Limits are sized on window-to-date spend (`manifests.plan_budgets`), so the planned mix holds (teams: 2 over,
-  2 near, the rest under 75%; groups and org 60-90%; daily Tokens 50-90%).
-
-## Backfill and purge (Task 7)
-
-- `td.py backfill --context C [--days 30] [--replace]` streams `generate()` → `spans.to_row`
-  → gzip JSONEachRow `INSERT INTO platformdb.otel_traces_json` in 20k batches over a
-  port-forward to `management-clickhouse-shard0-0:8123`. The MVs fan out into
-  `agw_spans_typed`, `agw_chat_spans`, `trace_time_index` and the 8 `agw_*_5m` rollups.
-  30 days ≈ 559k rows, about 4–5 minutes on omni-viper, ~240 bytes/row gzipped.
-  `otel_traces_json` has no row TTL (only Events/Links columns, 7 days), so 30 days stay.
-- `backfill` refuses when any TD span exists (`td_span_predicate()`); `--replace` purges first.
-- `td_span_predicate()`: custom_dimensions contains `["organization","TD"]` **or**
-  `server.address = 'td.demo.local'` (also catches 401s and the Task 4 spike spans).
-- Backfilled rows mirror the live TD spans (Task 5): dims sorted by id incl. `client` and
-  `virtualKey`; budgets `ids` = the 3 real `td-demo/td-budgets/<entry>` names (org, group,
-  team), `action_taken: ALLOW`, no `unit` (USD-only budgets); `cache_read.input_tokens`
-  always present; errors (429/4xx/5xx) carry zero costs and no `gen_ai.response`/`usage`,
-  like the live 429. `StatusCode` is `Error` for ≥ 500 (brief; live 5xx unobserved) and
-  `Unset` otherwise. `cluster_name` is read from the newest real `agentgateway-proxy` span.
-- The UI "Global Error Rate" stays 0% for live and backfilled TD errors alike: the
-  `agw_spans_typed_mv` reads `http.status`, while spans carry `http.response.status_code`.
-- `down --purge-history` (and `backfill --replace`) run `ClickHouse.purge_td()`:
-  1. Freeze the TD span ids (`td_span_predicate()` AND older than the live edge = now − 2 min,
-     floored to 5 min) into `td_purge_backup.td_span_ids__<stamp>`. TD spans newer than that
-     are left for the next purge; if the newest TD span is at the edge, it waits once (≤ ~7 min).
-  2. Snapshot the affected rollup range into `td_purge_backup.<table>__<stamp>`, and the TD
-     rows of `trace_time_index` into `td_purge_backup.trace_time_index__<stamp>`. Ledger row
-     `started` in `td_purge_backup.__purges`.
-  3. Record real totals (rollup − TD contribution); delete TD traces from `agw_spans_typed`
-     / `agw_chat_spans`; delete and re-insert the rollup range from the cleaned source with
-     each view's `as_select`; verify the real totals are identical → ledger `verified`.
-  4. Delete TD trace ids from `trace_time_index` and the TD traces from `otel_traces_json` →
-     ledger `completed`. Prints the restore SQL and `DROP DATABASE td_purge_backup`.
-  - "TD traces" = TraceId in any frozen id table (`merge('td_purge_backup','^td_span_ids__')`),
-    limited to the recomputed time range. Trace ids are random and TD-only, so this also removes
-    the attribute-less second span of each live TD request (164 such spans from Tasks 4/5 were
-    removed on 2026-10-21) and the `trace_time_index` orphans left by earlier purges.
-  - Any failure after the snapshot prints that stamp's restore SQL and re-raises. A purge
-    refuses to start while an earlier stamp has `started` but no `verified` in the ledger, and
-    prints that stamp's restore SQL; `--force-new-backup` overrides (on `backfill` and `down`).
-    Stamps from before the ledger existed have no rows and never block.
-
-## Gotchas
-
-1. **`providerOverride: bedrock` is unpriced. Use `aws.bedrock`.**
-2. **The Azure built-in catalog has no `gpt-4.1-mini`**, nor `gpt-4.1`, `gpt-4o*` or
-   `o4-mini`. Use `gpt-5.4-mini`.
-3. Custom key metadata under `custom` is `apiKey.custom.X`, not `apiKey.X`. The UI only
-   shows non-standard fields that live under `custom`.
 4. Budget `limit.amount` is an integer ≥ 1, `window` is `{unit: …}`, and enforcement
    needs `entBudgetEnforcement` on a policy.
 5. `StatusCode` stays `Unset` on 4xx/5xx spans.
@@ -480,10 +409,6 @@ Verified on omni-viper (2026-10-21; `AgentgatewayCostAPI/ListBudgets`, ClickHous
    or poll before sending live traffic after `up`.
 7. The collector has no OTLP/HTTP. Backfill should use a ClickHouse HTTP insert, or
    gRPC.
-8. `python:3.12-slim` triggers PodSecurity `restricted` **warnings** in a new namespace
-   (warn only; the pod runs). To silence them, add `securityContext`
-   (`runAsNonRoot: true`, `runAsUser: 65534`, `allowPrivilegeEscalation: false`,
-   `capabilities.drop: [ALL]`, `seccompProfile.type: RuntimeDefault`).
 9. A plain-string key (no JSON) has no `apiKey.id`, so the Virtual Key dimension is
    empty.
 10. The spike left **66 spans (~68.6M tokens, ~$216 of synthetic spend)** in ClickHouse, from

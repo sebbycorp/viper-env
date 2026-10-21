@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import random
 import re
-import threading
 import time
 from collections import Counter
 from dataclasses import dataclass, field
@@ -31,6 +30,8 @@ INTERVAL_S = 5.0                # wall-clock seconds generated per insert
 BUDGET_S = 60.0                 # budget outcome refresh interval
 SUMMARY_S = 30.0                # one-line summary interval
 BACKOFF_START, BACKOFF_MAX = 1, 30
+CH_TIMEOUT_S = 30.0            # HTTP timeout for live inserts (the backfill default is 30 min)
+MAX_KUBE_FAILURES = 5           # consecutive port-forward failures before giving up
 MAX_PENDING = 200_000           # rows kept for retry while ClickHouse is unreachable
 # Connection-level failures: the port-forward (or the pod behind it) went away.
 CONNECTION_ERRORS = (OSError, KubeError)
@@ -52,6 +53,7 @@ class Link:
         self.factory, self.sleep, self.log = factory, sleep, log
         self.ch = None
         self.reconnects = 0
+        self._kube_failures = 0
         self._cm = None
         self._delay = BACKOFF_START
 
@@ -68,7 +70,7 @@ class Link:
             except Exception as e:  # noqa: BLE001 -- a dying port-forward must not mask the real error
                 self.log(f"live: closing the port-forward: {e}")
 
-    def call(self, fn):
+    def call(self, fn, once: bool = False):
         why = None
         while True:
             try:
@@ -76,9 +78,17 @@ class Link:
                     self.open()
                 out = fn(self.ch)
                 self._delay = BACKOFF_START
+                self._kube_failures = 0
                 return out
             except CONNECTION_ERRORS as e:
+                if once:
+                    raise
                 why = f"{type(e).__name__}: {e}"
+                self._kube_failures = self._kube_failures + 1 if isinstance(e, KubeError) else 0
+                if self._kube_failures >= MAX_KUBE_FAILURES:
+                    self.close()
+                    raise KubeError(f"giving up after {MAX_KUBE_FAILURES} failed port-forwards to ClickHouse "
+                                    f"(last: {e}); check the cluster connection and re-run") from None
             self.reconnects += 1
             self.close()
             delay = self._delay
@@ -178,24 +188,24 @@ def run_live(kube, org: Org, *, speed: float = 1.0, min_rpm: float = 6.0, interv
         if not pending:
             return
         try:
-            link.call(lambda ch: ch.insert_rows(SPANS_TABLE, pending))
+            link.call(lambda ch: ch.insert_rows(SPANS_TABLE, pending, attempts=1))
             pending = []
         except ClickHouseError as e:
             log(f"live: insert failed ({e}); will retry with the next batch")
             pending = pending[-MAX_PENDING:]
 
-    def refresh_budgets(now: datetime) -> None:
+    def refresh_budgets(now: datetime, once: bool = False) -> None:
         targets = budget_sync.budget_targets(org, budgets, now, history_seed, rates=rates, live=sent_reqs)
         try:
             link.call(lambda ch: budget_sync.write_budget_outcomes(
-                ch, kube, targets, now, created=created, cluster=cluster[0]))
+                ch, kube, targets, now, created=created, cluster=cluster[0], attempts=1), once=once)
         except ClickHouseError as e:
             log(f"live: budget refresh failed ({e})")
 
     log(f"live: writing spans straight into ClickHouse every {interval:g}s, speed x{speed:g}, floor {min_rpm:g} rpm, "
         + (f"for {duration:g}s" if duration is not None else "until Ctrl-C"))
-    try:
-        with link:
+    with link:
+        try:
             cluster.append(link.call(lambda ch: ch.cluster_name(template["ResourceAttributes"]["cluster_name"])))
             t = t_start
             while end is None or t < end:
@@ -220,9 +230,14 @@ def run_live(kube, org: Org, *, speed: float = 1.0, min_rpm: float = 6.0, interv
                     log(f"live: {(now - t_start).total_seconds():5.0f}s {stats.line()}")
                     next_summary += timedelta(seconds=summary_s)
                 t = t1
-    except KeyboardInterrupt:
-        stats.interrupted = True
-        log("live: interrupted; closing the port-forward")
+        except KeyboardInterrupt:
+            stats.interrupted = True
+            log("live: interrupted; final budget refresh, then closing the port-forward")
+            try:                        # one bounded attempt; any error (even a second Ctrl-C) is ignored
+                if cluster:
+                    refresh_budgets(clock(), once=True)
+            except (Exception, KeyboardInterrupt):  # noqa: BLE001
+                pass
     stats.reconnects = link.reconnects
     log(f"live: done {stats.line()}")
     return stats

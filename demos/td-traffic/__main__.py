@@ -22,7 +22,17 @@ def payload_dir() -> Path:
     here = Path(__file__).resolve().parent          # the .pyz file itself, or a plain directory
     if not here.is_file():
         return here
-    root = Path(os.environ.get("TD_TRAFFIC_CACHE") or Path.home() / ".cache" / "td-traffic")
+    try:
+        root = Path(os.environ.get("TD_TRAFFIC_CACHE") or Path.home() / ".cache" / "td-traffic")
+    except RuntimeError:                            # no HOME
+        root = Path(tempfile.gettempdir()) / "td-traffic-cache"
+    try:
+        return _extract(here, root)
+    except OSError as e:
+        sys.exit(f"td-traffic: cannot unpack to {root} ({e}). Set TD_TRAFFIC_CACHE to a writable directory.")
+
+
+def _extract(here: Path, root: Path) -> Path:
     dest = root / hashlib.sha256(here.read_bytes()).hexdigest()[:16]
     if not (dest / ".complete").exists():
         root.mkdir(parents=True, exist_ok=True)

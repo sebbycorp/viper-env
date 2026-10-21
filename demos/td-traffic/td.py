@@ -294,13 +294,13 @@ def cmd_down(kube: Kube, args) -> int:
 
 
 @contextlib.contextmanager
-def open_clickhouse(kube: Kube) -> Iterator[ClickHouse]:
+def open_clickhouse(kube: Kube, timeout: float = 1800.0) -> Iterator[ClickHouse]:
     """ClickHouse over a port-forward to the management ClickHouse pod, credentials from its Secret."""
     ns, pod, secret = discover_clickhouse(kube)
     sec = json.loads(kube.run(["get", "secret", secret, "-n", ns, "-o", "json"]))["data"]
     user, pw = (base64.b64decode(sec[k]).decode() for k in ("username", "password"))
     with kube.port_forward(f"pod/{pod}", ns, 8123) as port:
-        ch = ClickHouse(f"http://127.0.0.1:{port}", user, pw)
+        ch = ClickHouse(f"http://127.0.0.1:{port}", user, pw, timeout=timeout)
         ch.restore_dir = str(Path.cwd())
         ch.restore_cmd_prefix = restore_command_prefix(kube.context, ns, pod, secret)
         yield ch
@@ -369,7 +369,7 @@ def cmd_status(kube: Kube, args) -> int:
 def cmd_live(kube: Kube, args) -> int:
     duration = live.parse_duration(args.duration) if args.duration else None
     stats = live.run_live(kube, build_org(), speed=args.speed, min_rpm=args.min_rpm, duration=duration,
-                          ch_factory=lambda: open_clickhouse(kube), rates=load_rates(RATES_PATH), seed=args.seed,
+                          ch_factory=lambda: open_clickhouse(kube, timeout=live.CH_TIMEOUT_S), rates=load_rates(RATES_PATH), seed=args.seed,
                           log=log)
     log("live: clients " + ", ".join(f"{k}={v}" for k, v in sorted(stats.clients.items())))
     return 0
@@ -408,15 +408,15 @@ def cmd_demo(kube: Kube, args) -> int:
         return rc
     log("demo: ready.")
     log(f"  Solo UI:   {ui_url(kube)}")
-    log(f"  next:      python3 td-traffic.pyz live --context {kube.context}   (Ctrl-C stops)")
-    log(f"  cleanup:   python3 td-traffic.pyz down --purge-history --context {kube.context}")
+    log(f"  next:      uv run --python 3.12 python td-traffic.pyz live --context {kube.context}   (Ctrl-C stops)")
+    log(f"  cleanup:   uv run --python 3.12 python td-traffic.pyz down --purge-history --context {kube.context}")
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="td-traffic", description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("selfcheck")      # hidden from --help (no help=): packaging smoke test
+    sub.add_parser("selfcheck", help=argparse.SUPPRESS)      # hidden: packaging smoke test
     for name, fn, hlp in [
         ("demo", cmd_demo, "one shot: preflight, up, backfill --replace, sync-budgets; prints the UI URL"),
         ("up", cmd_up, "create the TD demo objects, keys, budgets and dimensions"),

@@ -51,7 +51,7 @@ class FakeCH:
     def cluster_name(self, default):
         return "omni-viper"
 
-    def insert_rows(self, table, rows, batch=20_000, progress=None):
+    def insert_rows(self, table, rows, batch=20_000, progress=None, attempts=8):
         rows = list(rows)
         if self.fail:
             self.fail -= 1
@@ -125,13 +125,83 @@ def test_live_refreshes_budget_outcomes():
     assert len(ts) >= 2
 
 
-def test_live_reconnects_clickhouse():
-    ch = FakeCH(fail_inserts=3)
-    stats, ch, fac, clock = run(PEAK, duration=60, ch=ch)
-    assert fac.entered == fac.exited == 4              # first open + one reopen per failure
+def test_live_reconnects_clickhouse(monkeypatch):
+    """Real ClickHouse insert path with a failing urlopen: one attempt per insert, Link does the backoff."""
+    import gzip
+    import urllib.parse
+    from tdlib import clickhouse as chmod
+
+    fails = {"n": 3}
+    inserted, timeouts = [], []
+    inner_sleeps = []
+
+    class Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+        def read(self):
+            return b""
+
+    def fake_urlopen(req, timeout=None):
+        timeouts.append(timeout)
+        if req.data is not None and req.get_header("Content-encoding") == "gzip" and fails["n"] > 0:
+            fails["n"] -= 1
+            raise ConnectionRefusedError("port-forward dropped")
+        if req.data is not None and req.get_header("Content-encoding") == "gzip":
+            inserted.extend(gzip.decompress(req.data).decode().splitlines())
+        return Resp()
+
+    monkeypatch.setattr(chmod.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(chmod.time, "sleep", lambda s: inner_sleeps.append(s))
+    clock = FakeClock(PEAK)
+    fac = Factory(None)
+
+    @contextlib.contextmanager
+    def factory():
+        fac.entered += 1
+        try:
+            yield chmod.ClickHouse("http://127.0.0.1:1", "u", "p", timeout=live.CH_TIMEOUT_S)
+        finally:
+            fac.exited += 1
+
+    stats = live.run_live(FakeKube(PEAK), ORG, duration=60, ch_factory=factory, clock=clock, sleep=clock.sleep,
+                          rates=RATES, seed=3, log=lambda m: None)
+    assert not inner_sleeps                              # no inner 8x retry / _batch_landed backoff
+    assert fac.entered == fac.exited == 4
     assert [s for s in clock.slept if s in (1, 2, 4)][:3] == [1, 2, 4]
     assert stats.reconnects == 3
-    assert stats.sent == len(ch.span_rows())           # nothing lost: pending rows retried
+    spans = [json.loads(l) for l in inserted]
+    assert len([r for r in spans if r["SpanName"] != "agw.ai.budgets.outcome"]) == stats.sent
+    assert set(timeouts) == {live.CH_TIMEOUT_S} or live.CH_TIMEOUT_S in set(timeouts)
+
+
+def test_live_gives_up_after_repeated_kube_failures():
+    from tdlib.kube import KubeError
+
+    @contextlib.contextmanager
+    def factory():
+        raise KubeError("no pod")
+        yield
+    clock = FakeClock(PEAK)
+    with pytest.raises(KubeError, match="giving up"):
+        live.run_live(FakeKube(PEAK), ORG, duration=60, ch_factory=factory, clock=clock, sleep=clock.sleep,
+                      rates=RATES, log=lambda m: None)
+
+
+def test_live_ctrl_c_final_budget_refresh():
+    clock = FakeClock(PEAK)
+    ch = FakeCH()
+
+    def sleep(s):
+        if clock() > PEAK + timedelta(seconds=20):
+            raise KeyboardInterrupt
+        clock.sleep(s)
+    live.run_live(FakeKube(PEAK), ORG, duration=600, ch_factory=Factory(ch), clock=clock, sleep=sleep,
+                  rates=RATES, seed=8, log=lambda m: None)
+    assert ch.outcome_rows()                             # refreshed once on exit though < 60 s had passed
 
 
 def test_live_backoff_caps_at_30():
