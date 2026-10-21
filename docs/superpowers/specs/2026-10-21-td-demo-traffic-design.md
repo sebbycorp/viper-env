@@ -153,8 +153,9 @@ UI auth.
   - **Claude Desktop → Bedrock Claude Opus**, for about 5 users, mostly in risk and
     business roles.
 
-  Opus is likely to lead on dollars while Azure leads on requests. That is a realistic
-  and useful split for the demo.
+  **Azure leads on both requests and dollars** (user requirement, 2026-10-21): at least
+  45% of spend, Bedrock Opus second, Mistral smallest. Copilot users run agent mode with
+  large contexts, and some are power users.
 - **Realism targets (rough, typical rather than a fixed target):**
   - Claude Code power users: about $40–80 per working day each, with large
     agentic-context prompts.

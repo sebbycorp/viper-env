@@ -243,6 +243,10 @@ def test_volume_and_spend_are_realistic():
     assert 20_000 < len(reqs) < 300_000
     spend = sum(cost(r, rates)["total"] for r in reqs)
     assert 10_000 < spend < 18_000          # user: 10k+ per 7 days (≈ $45–75k/month)
+    by_provider = {}
+    for r in reqs: by_provider[r.route.provider] = by_provider.get(r.route.provider, 0) + cost(r, rates)["total"]
+    assert by_provider["azure"] >= 0.45 * spend                      # user: Azure leads spend
+    assert by_provider["azure"] > by_provider["bedrock"] > by_provider["mistral"] > 0
     errs = sum(r.status >= 400 for r in reqs) / len(reqs)
     assert 0.005 < errs < 0.03 and any(r.status == 429 for r in reqs)
 
@@ -275,6 +279,7 @@ def test_cost_matches_rates():
     - Output: median 400–1,200 by tool.
   - **Latency:** lognormal per model.
   - **Errors:** about 1.2% total; 429 is half of them, then 500/503/400.
+  - **Azure must lead spend (user requirement):** Copilot users run agent mode with large contexts on `azure-gpt` (gpt-5.4 class); some Copilot power users exist. Target Azure ≥ 45% of total spend, Bedrock Opus second, Mistral smallest.
   - **Model choice:**
     - Copilot non-BYOK: 70% `azure-gpt`, 30% `azure-gpt-mini`.
     - BYOK users: 80% `mistral-large`.
