@@ -1,224 +1,178 @@
+"""`live` writes TD spans straight into ClickHouse (no HTTP to the gateway) and nudges the budgets."""
 import contextlib
 import json
 import threading
 from datetime import datetime, timedelta, timezone
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
 from tdlib import live
+from tdlib.clickhouse import SPANS_TABLE
+from tdlib.manifests import BUDGET, HOSTNAME, NAMESPACE, plan_budgets
 from tdlib.org import build_org
-from tdlib.usage import CI_USER_AGENTS, MODELS, TORONTO, USER_AGENTS, client_for_ua
+from tdlib.pricing import load_rates
+from tdlib.spans import td_span_predicate
+from tdlib.usage import TORONTO
+from pathlib import Path
 
 ORG = build_org()
-SECRETS = {k.secret for k in ORG.keys}
-ROUTES = {m.route for m in MODELS.values()}
+RATES = load_rates(Path(__file__).resolve().parents[3] / "apps/agentgateway-system/model-costs.yaml")
+PEAK = datetime(2026, 10, 21, 10, 30, tzinfo=TORONTO).astimezone(timezone.utc)
+SUNDAY_3AM = datetime(2026, 10, 25, 3, 0, tzinfo=TORONTO).astimezone(timezone.utc)
+BUDGETS = plan_budgets(ORG, RATES, 42, PEAK)
 
 
 class FakeClock:
-    def __init__(self, start: datetime):
-        self.now = start
-        self.lock = threading.Lock()
-        self.slept: list[float] = []
+    def __init__(self, start):
+        self.now, self.lock, self.slept = start, threading.Lock(), []
 
-    def __call__(self) -> datetime:
-        with self.lock:
-            return self.now
+    def __call__(self):
+        return self.now
 
-    def sleep(self, s: float) -> None:
-        with self.lock:
-            self.slept.append(s)
-            self.now += timedelta(seconds=max(0.0, s))
+    def sleep(self, s):
+        self.slept.append(s)
+        self.now += timedelta(seconds=max(0.0, s))
 
 
 class FakeKube:
-    """kube.port_forward stand-in: counts how often the port-forward was opened / closed."""
+    def __init__(self, start):
+        self.created = start - timedelta(days=1)
 
-    def __init__(self, port: int = 18080):
-        self.port = port
-        self.entered = 0
-        self.exited = 0
-        self.targets: list[tuple] = []
+    def run(self, args, check=True, input=None):
+        return json.dumps({"metadata": {"name": BUDGET, "namespace": NAMESPACE,
+                                        "creationTimestamp": self.created.strftime("%Y-%m-%dT%H:%M:%SZ")},
+                           "spec": {"budgets": BUDGETS}})
+
+
+class FakeCH:
+    def __init__(self, fail_inserts=0):
+        self.inserts, self.fail = [], fail_inserts
+
+    def cluster_name(self, default):
+        return "omni-viper"
+
+    def insert_rows(self, table, rows, batch=20_000, progress=None):
+        rows = list(rows)
+        if self.fail:
+            self.fail -= 1
+            raise ConnectionRefusedError("port-forward dropped")
+        self.inserts.append((table, rows))
+        return len(rows)
+
+    def span_rows(self):
+        return [r for _, rows in self.inserts for r in rows if r["SpanName"] != "agw.ai.budgets.outcome"]
+
+    def outcome_rows(self):
+        return [r for _, rows in self.inserts for r in rows if r["SpanName"] == "agw.ai.budgets.outcome"]
+
+
+class Factory:
+    """ch_factory: counts opens / closes; each open hands out the shared FakeCH."""
+
+    def __init__(self, ch):
+        self.ch, self.entered, self.exited = ch, 0, 0
 
     @contextlib.contextmanager
-    def port_forward(self, target, ns, remote, timeout=20.0):
+    def __call__(self):
         self.entered += 1
-        self.targets.append((target, ns, remote))
         try:
-            yield self.port
+            yield self.ch
         finally:
             self.exited += 1
 
 
-# Weekday 10:30 Toronto (peak) and Sunday 03:00 Toronto (night floor).
-PEAK = datetime(2026, 10, 21, 10, 30, tzinfo=TORONTO).astimezone(timezone.utc)
-SUNDAY_3AM = datetime(2026, 10, 25, 3, 0, tzinfo=TORONTO).astimezone(timezone.utc)
+def run(start, *, duration, ch=None, **kw):
+    clock = FakeClock(start)
+    ch = ch or FakeCH()
+    fac = Factory(ch)
+    kw.setdefault("seed", 3)
+    stats = live.run_live(FakeKube(start), ORG, duration=duration, ch_factory=fac, clock=clock, sleep=clock.sleep,
+                          rates=RATES, log=lambda m: None, **kw)
+    return stats, ch, fac, clock
 
 
-class Capture(BaseHTTPRequestHandler):
-    protocol_version = "HTTP/1.1"
-    seen: list[dict] = []
-    lock = threading.Lock()
-
-    def log_message(self, *a):
-        pass
-
-    def do_POST(self):
-        body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-        with Capture.lock:
-            Capture.seen.append({"path": self.path, "headers": dict(self.headers.items()), "body": json.loads(body)})
-        data = b'{"ok": true}'
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
+def test_live_inserts_batches_each_interval():
+    stats, ch, fac, clock = run(PEAK, duration=60, interval=5.0)
+    batches = [rows for _, rows in ch.inserts if rows and rows[0]["SpanName"] != "agw.ai.budgets.outcome"]
+    assert 8 <= len(batches) <= 13                     # ~one per 5 s window
+    assert all(t == SPANS_TABLE for t, _ in ch.inserts)
+    assert stats.sent == len(ch.span_rows()) > 0
+    assert fac.entered == fac.exited == 1
+    ts = [datetime.strptime(r["Timestamp"][:26], "%Y-%m-%d %H:%M:%S.%f").replace(tzinfo=timezone.utc)
+          for r in ch.span_rows()]
+    assert min(ts) >= PEAK and max(ts) <= PEAK + timedelta(seconds=60)   # never future-dated
 
 
-@pytest.fixture
-def capture_server():
-    Capture.seen = []
-    srv = ThreadingHTTPServer(("127.0.0.1", 0), Capture)
-    t = threading.Thread(target=srv.serve_forever, daemon=True)
-    t.start()
-    yield srv.server_address[1]
-    srv.shutdown()
-    srv.server_close()
-
-
-def test_live_sends_headers(capture_server):
-    """The default (urllib) sender, end to end against a local HTTP server standing in for the gateway."""
-    kube = FakeKube(port=capture_server)
-    clock = FakeClock(PEAK)
-    stats = live.run_live(kube, ORG, duration=120, concurrency=2, clock=clock, sleep=clock.sleep, seed=1,
-                          log=lambda m: None)
-    seen = Capture.seen
-    assert len(seen) >= 20 and stats.sent == len(seen)
-    assert kube.targets[0] == ("svc/agentgateway-proxy", "agentgateway-system", 8080)
-    for s in seen:
-        h = {k.lower(): v for k, v in s["headers"].items()}
-        assert h["host"] == "td.demo.local"
-        assert h["authorization"].startswith("Bearer ") and h["authorization"][7:] in SECRETS
-        assert client_for_ua(h["user-agent"]) != "Other"
-        for name in ("x-td-input-tokens", "x-td-output-tokens", "x-td-cached-tokens", "x-td-latency-ms",
-                     "x-td-status"):
-            assert int(h[name]) >= 0
-        assert any(s["path"] == r + "/v1/chat/completions" for r in ROUTES)
-        model = {m.route + "/v1/chat/completions": m.model for m in MODELS.values()}[s["path"]]
-        assert s["body"]["model"] == model and s["body"]["messages"][-1]["content"]
-
-
-def test_live_headers_mirror_request():
-    from tdlib.usage import sample_request
-    import random
-    rng = random.Random(3)
-    for k in ORG.keys[:20]:
-        r = sample_request(k, PEAK, rng)
-        h = live.headers(r)
-        assert h["Host"] == "td.demo.local"
-        assert h["Authorization"] == f"Bearer {k.secret}"
-        assert h["User-Agent"] == r.user_agent
-        assert h["x-td-input-tokens"] == str(r.input_tokens)
-        assert h["x-td-output-tokens"] == str(r.output_tokens)
-        assert h["x-td-cached-tokens"] == str(r.cache_read_tokens)
-        assert h["x-td-latency-ms"] == str(r.latency_ms)
-        assert h["x-td-status"] == str(r.status)
-
-
-def test_live_rate_floor():
-    sent = []
-    clock = FakeClock(SUNDAY_3AM)
-    live.run_live(FakeKube(), ORG, duration=600, min_rpm=6.0, concurrency=1, clock=clock, sleep=clock.sleep,
-                  sender=lambda req, base: sent.append(req) or 200, seed=2, log=lambda m: None)
-    assert len(sent) >= 6.0 * 10 * 0.8
-    assert len(sent) <= 6.0 * 10 * 2          # the floor is a floor, not a flood
-
-
-def test_live_uses_all_clients_at_peak():
-    sent = []
-    clock = FakeClock(PEAK)
-    live.run_live(FakeKube(), ORG, duration=300, concurrency=1, clock=clock, sleep=clock.sleep,
-                  sender=lambda req, base: sent.append(req) or 200, seed=4, log=lambda m: None)
-    clients = {client_for_ua(r.user_agent) for r in sent}
+def test_live_rows_match_td_predicate():
+    _, ch, _, _ = run(PEAK, duration=300)
+    rows = ch.span_rows()
+    pred = td_span_predicate()
+    assert f"'{HOSTNAME}'" in pred
+    assert all(r["SpanAttributes"]["server"]["address"] == HOSTNAME for r in rows)
+    assert all(r["ResourceAttributes"]["cluster_name"] == "omni-viper" for r in rows)
+    dims = [r["SpanAttributes"]["agw"]["llm"]["custom_dimensions"] for r in rows]
+    assert all('["organization","TD"]' in d for d in dims)
+    clients = {json.loads(d.replace("\n", ""))[i][1] for d in dims for i in range(len(json.loads(d)))
+               if json.loads(d)[i][0] == "client"}
     assert clients == {"GitHub Copilot", "VS Code", "Claude Code", "Claude Desktop", "Claude Code (CI)"}
-    known = {ua for uas in USER_AGENTS.values() for ua in uas} | set(CI_USER_AGENTS)
-    assert {r.user_agent for r in sent} <= known
 
 
-def test_live_speed_scales_rate():
-    def count(speed):
-        sent = []
-        clock = FakeClock(PEAK)
-        live.run_live(FakeKube(), ORG, duration=900, min_rpm=0, speed=speed, concurrency=1, clock=clock,
-                      sleep=clock.sleep, sender=lambda req, base: sent.append(req) or 200, seed=5,
-                      log=lambda m: None)
-        return len(sent)
-    one, three = count(1.0), count(3.0)
-    assert 2.4 * one <= three <= 3.6 * one
+def test_live_refreshes_budget_outcomes():
+    _, ch, _, _ = run(PEAK, duration=190)
+    outs = ch.outcome_rows()
+    assert len(outs) >= 2 * 6                          # >= 2 refreshes of 41 entries / 8 per row
+    ts = sorted({r["Timestamp"] for r in outs})
+    assert len(ts) >= 2
 
 
-def test_live_reconnects_after_connection_error():
-    kube = FakeKube()
-    clock = FakeClock(PEAK)
-    calls = {"n": 0}
-    ok = []
-
-    def flaky(req, base):
-        calls["n"] += 1
-        if calls["n"] <= 3:
-            raise ConnectionRefusedError("connection refused")
-        ok.append(req)
-        return 200
-
-    logs = []
-    stats = live.run_live(kube, ORG, duration=120, concurrency=1, clock=clock, sleep=clock.sleep, sender=flaky,
-                          seed=6, log=logs.append)
-    assert kube.entered >= 2 and kube.exited == kube.entered     # re-opened, and closed at the end
-    assert len(ok) > 10 and stats.sent == len(ok) and stats.failed == 0
+def test_live_reconnects_clickhouse():
+    ch = FakeCH(fail_inserts=3)
+    stats, ch, fac, clock = run(PEAK, duration=60, ch=ch)
+    assert fac.entered == fac.exited == 4              # first open + one reopen per failure
+    assert [s for s in clock.slept if s in (1, 2, 4)][:3] == [1, 2, 4]
     assert stats.reconnects == 3
-    assert [s for s in clock.slept if s in (1, 2, 4)][:3] == [1, 2, 4]   # backoff 1, 2, 4 ...
-    assert any("re-open" in m for m in logs)
+    assert stats.sent == len(ch.span_rows())           # nothing lost: pending rows retried
 
 
 def test_live_backoff_caps_at_30():
-    kube = FakeKube()
-    clock = FakeClock(PEAK)
-    calls = {"n": 0}
-
-    def flaky(req, base):
-        calls["n"] += 1
-        if calls["n"] <= 7:
-            raise ConnectionResetError("reset")
-        return 200
-
-    live.run_live(kube, ORG, duration=30, concurrency=1, clock=clock, sleep=clock.sleep, sender=flaky, seed=7,
-                  log=lambda m: None)
+    ch = FakeCH(fail_inserts=8)
+    _, _, _, clock = run(PEAK, duration=30, ch=ch)
     backoffs = [s for s in clock.slept if s in (1, 2, 4, 8, 16, 30)]
     assert backoffs[:7] == [1, 2, 4, 8, 16, 30, 30]
 
 
-def test_live_ctrl_c_closes_port_forward():
-    kube = FakeKube()
-    clock = FakeClock(PEAK)
+def test_live_rate_floor():
+    stats, ch, _, _ = run(SUNDAY_3AM, duration=600, min_rpm=6.0)
+    assert 6.0 * 10 * 0.8 <= stats.sent <= 6.0 * 10 * 2
 
-    def sleep(s):                       # Ctrl-C lands in the main thread, usually while it waits
+
+def test_live_ctrl_c_exits_cleanly():
+    clock = FakeClock(PEAK)
+    ch = FakeCH()
+    fac = Factory(ch)
+
+    def sleep(s):
         if clock() > PEAK + timedelta(seconds=40):
             raise KeyboardInterrupt
         clock.sleep(s)
 
-    stats = live.run_live(kube, ORG, duration=600, concurrency=2, clock=clock, sleep=sleep,
-                          sender=lambda req, base: 200, seed=8, log=lambda m: None)
-    assert stats.interrupted and stats.sent > 0 and kube.entered == kube.exited == 1
+    stats = live.run_live(FakeKube(PEAK), ORG, duration=600, ch_factory=fac, clock=clock, sleep=sleep,
+                          rates=RATES, seed=8, log=lambda m: None)
+    assert stats.interrupted and stats.sent > 0 and fac.entered == fac.exited == 1
 
 
 def test_live_summary_every_30s():
     logs = []
     clock = FakeClock(PEAK)
-    live.run_live(FakeKube(), ORG, duration=120, concurrency=1, clock=clock, sleep=clock.sleep,
-                  sender=lambda req, base: 200, seed=9, log=logs.append)
+    live.run_live(FakeKube(PEAK), ORG, duration=120, ch_factory=Factory(FakeCH()), clock=clock, sleep=clock.sleep,
+                  rates=RATES, seed=9, log=logs.append)
     summaries = [m for m in logs if m.startswith("live: ") and "sent=" in m]
-    assert len(summaries) >= 4
-    assert "200=" in summaries[-1] and "spend=$" in summaries[-1]
+    assert len(summaries) >= 4 and "spend=$" in summaries[-1]
+
+
+def test_no_gateway_http_left():
+    for name in ("Gateway", "urllib_sender", "send_with_reconnect", "headers", "body", "url_for"):
+        assert not hasattr(live, name)
 
 
 @pytest.mark.parametrize("text,seconds", [("10m", 600), ("90s", 90), ("1h", 3600), ("45", 45), ("1.5m", 90)])
@@ -245,9 +199,9 @@ def test_cli_live_passes_options(monkeypatch):
         s.sent = 1
         return s
     monkeypatch.setattr(td.live, "run_live", fake_run_live)
-    assert td.main(["live", "--context", "CTX", "--duration", "5m", "--speed", "2", "--concurrency", "3"]) == 0
-    assert got["context"] == "CTX" and got["duration"] == 300 and got["speed"] == 2 and got["concurrency"] == 3
-    assert got["rates"]
+    assert td.main(["live", "--context", "CTX", "--duration", "5m", "--speed", "2", "--min-rpm", "9"]) == 0
+    assert got["context"] == "CTX" and got["duration"] == 300 and got["speed"] == 2 and got["min_rpm"] == 9
+    assert got["rates"] and callable(got["ch_factory"])
 
 
 def test_cli_replan_budgets_applies_only_budgets(monkeypatch):
