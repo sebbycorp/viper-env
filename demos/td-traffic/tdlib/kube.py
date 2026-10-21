@@ -69,6 +69,18 @@ class Kube:
         doc = json.dumps({"apiVersion": "v1", "kind": "List", "items": objs})
         return self.run(["apply", "-f", "-"], input=doc)
 
+    def crd_spec_schema(self, name: str) -> "dict | None":
+        """The served version's openAPIV3 `spec` schema of CRD `name`; None when the CRD is not installed."""
+        p = self.kubectl(["get", "crd", name, "-o", "json"], check=False)
+        if p.returncode != 0:
+            return None
+        try:
+            versions = json.loads(p.stdout, strict=False)["spec"]["versions"]
+        except (ValueError, KeyError, TypeError):
+            return None
+        served = [v for v in versions if v.get("served")] or versions
+        return served[0].get("schema", {}).get("openAPIV3Schema", {}).get("properties", {}).get("spec", {})
+
     def delete_labeled(self, kinds: list[str], namespace: str) -> str:
         """Delete demo=td objects of these kinds; missing namespace / CRD / objects are fine."""
         p = self.kubectl(["delete", ",".join(kinds), "-n", namespace, "-l", "demo=td",

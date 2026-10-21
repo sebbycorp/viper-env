@@ -172,8 +172,12 @@ def run_live(kube, org: Org, *, speed: float = 1.0, min_rpm: float = 6.0, interv
     sched = Scheduler(org, random.Random(seed), speed, min_rpm)
     stats = Stats()
     template = load_template()
-    obj = budget_sync.budget_object(kube)           # KubeError here = `demo` has not been run
-    budgets, created = obj["spec"]["budgets"], budget_sync.created_at(obj)
+    try:
+        obj = budget_sync.budget_object(kube)
+        budgets, created = obj["spec"]["budgets"], budget_sync.created_at(obj)
+    except KubeError:                               # no budgets on this cluster (older agentgateway or not set up)
+        log("live: no TD budget object found; writing spans only")
+        budgets, created = [], None
     t_start = clock()
     end = t_start + timedelta(seconds=duration) if duration is not None else None
     next_budget = t_start + timedelta(seconds=budget_s)
@@ -195,6 +199,8 @@ def run_live(kube, org: Org, *, speed: float = 1.0, min_rpm: float = 6.0, interv
             pending = pending[-MAX_PENDING:]
 
     def refresh_budgets(now: datetime, once: bool = False) -> None:
+        if not budgets:
+            return
         targets = budget_sync.budget_targets(org, budgets, now, history_seed, rates=rates, live=sent_reqs)
         try:
             link.call(lambda ch: budget_sync.write_budget_outcomes(
