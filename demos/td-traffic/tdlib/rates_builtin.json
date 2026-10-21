@@ -1,0 +1,16 @@
+{
+  "_comment": "USD per 1M tokens from the proxy's BUILT-IN catalog (not in model-costs.yaml), recorded live in NOTES.md route table. gpt-5.4-mini cacheRead was not measured: 0.075 is an ESTIMATE (input x 0.1); usage.py sends 0 cached tokens for mini anyway. gpt-5.4 above 272k context is 5/22.5/0.5; usage.py keeps inputs below that tier.",
+  "providers": {
+    "azure": {
+      "models": {
+        "gpt-5.4": {"rates": {"input": "2.5", "output": "15", "cacheRead": "0.25"}},
+        "gpt-5.4-mini": {"rates": {"input": "0.75", "output": "4.5", "cacheRead": "0.075"}}
+      }
+    },
+    "mistral": {
+      "models": {
+        "mistral-large-latest": {"rates": {"input": "0.5", "output": "1.5", "cacheRead": "0.05"}}
+      }
+    }
+  }
+}
