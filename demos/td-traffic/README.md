@@ -1,6 +1,6 @@
 # TD Bank demo traffic for the agentgateway UI
 
-A single-file tool that fills the Solo Enterprise agentgateway UI with synthetic usage from a
+A single-file Python script (`td-traffic.py`) that fills the Solo Enterprise agentgateway UI with synthetic usage from a
 fictional TD Bank (@td.com) AI-assistant rollout: 30 days of history in Cost Management,
 populated Budgets and Virtual Keys pages, and fresh traces on demo day. All data is synthetic.
 Nothing runs in the cluster beyond config, and nothing is sent to a provider: spans are written
@@ -17,21 +17,21 @@ Prerequisites on your laptop:
 Download the tool (the repo is private, so use `gh` with repo access):
 
 ```bash
-gh release download -R sebbycorp/viper-env --pattern td-traffic.pyz
+gh release download -R sebbycorp/viper-env --pattern td-traffic.py
 # if the repo is public, this works too:
-# curl -fLO https://github.com/sebbycorp/viper-env/releases/latest/download/td-traffic.pyz
+# curl -fLO https://github.com/sebbycorp/viper-env/releases/latest/download/td-traffic.py
 ```
 
 Run it. This form works on stock macOS (its `python3` is 3.9):
 
 ```bash
-uv run --python 3.12 python td-traffic.pyz demo   --context <ctx>   # one-time setup, ~10 min, then it exits
-uv run --python 3.12 python td-traffic.pyz live   --context <ctx>   # keeps running until Ctrl-C
-uv run --python 3.12 python td-traffic.pyz status --context <ctx>   # object and span counts, budget window
-uv run --python 3.12 python td-traffic.pyz down --purge-history --context <ctx>   # remove everything
+uv run --python 3.12 python td-traffic.py demo   --context <ctx>   # one-time setup, ~10 min, then it exits
+uv run --python 3.12 python td-traffic.py live   --context <ctx>   # keeps running until Ctrl-C
+uv run --python 3.12 python td-traffic.py status --context <ctx>   # object and span counts, budget window
+uv run --python 3.12 python td-traffic.py down --purge-history --context <ctx>   # remove everything
 ```
 
-With Python 3.11+ installed, `python3 td-traffic.pyz <command> --context <ctx>` does the same.
+With Python 3.11+ installed, `python3 td-traffic.py <command> --context <ctx>` does the same.
 
 - `demo` is the one-time setup: it creates the config (keys, budgets, routes, dimensions), writes
   30 days of history into ClickHouse, and sets the Budgets page. It prints the Solo UI address
@@ -51,7 +51,7 @@ change nothing.
 
 From source: `git clone https://github.com/sebbycorp/viper-env && cd viper-env`, then
 `uv run demos/td-traffic/td.py <command> --context <ctx>`. Build the single file with
-`scripts/build-td-traffic.sh` (writes `dist/td-traffic.pyz`). Pushing a tag `td-traffic-v*`
+`scripts/build-td-traffic.sh` (writes `dist/td-traffic.py`, plus the same tool as `dist/td-traffic.pyz`). Pushing a tag `td-traffic-v*`
 publishes it as a GitHub release.
 
 ## The org at a glance
@@ -162,8 +162,8 @@ recovery commands.
 ## Cleanup
 
 ```bash
-uv run --python 3.12 python td-traffic.pyz down --context <ctx>                  # keep history
-uv run --python 3.12 python td-traffic.pyz down --context <ctx> --purge-history  # remove everything
+uv run --python 3.12 python td-traffic.py down --context <ctx>                  # keep history
+uv run --python 3.12 python td-traffic.py down --context <ctx> --purge-history  # remove everything
 ```
 
 Platform details and verified behavior are in [NOTES.md](NOTES.md). Tests:
