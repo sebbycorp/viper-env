@@ -85,21 +85,26 @@ CI_USER_AGENTS: list[str] = [
 ]
 
 
-def client_for_ua(ua: str) -> str:
-    """Mirror of the `client` dimension CEL (NOTES.md §4) PLUS a VS Code branch.
+# The `client` dimension: (label, [(CEL string method, substring), ...]) in CEL branch order;
+# a branch matches when ANY of its conditions does. Shared by the CEL renderer
+# (manifests.client_cel) and client_for_ua, so the two cannot drift. CI must precede
+# the plain claude-cli branch.
+CLIENT_RULES: list[tuple[str, list[tuple[str, str]]]] = [
+    ("Claude Code (CI)", [("contains", "sdk-cli")]),
+    ("Claude Code", [("startsWith", "claude-cli")]),
+    ("GitHub Copilot", [("startsWith", "GitHubCopilot")]),
+    ("Claude Desktop", [("contains", "Claude Desktop")]),
+    ("VS Code", [("startsWith", "Continue/"), ("startsWith", "Cline/")]),
+]
+CLIENT_OTHER = "Other"
 
-    The NOTES expression maps Continue/Cline to "Other"; Task 5 must add, before the
-    final "Other":  ua.startsWith("Continue/") || ua.startsWith("Cline/") ? "VS Code" :
-    """
-    if ua.startswith("claude-cli"):
-        return "Claude Code"
-    if ua.startswith("GitHubCopilot"):
-        return "GitHub Copilot"
-    if "Claude Desktop" in ua:
-        return "Claude Desktop"
-    if ua.startswith("Continue/") or ua.startswith("Cline/"):
-        return "VS Code"
-    return "Other"
+
+def client_for_ua(ua: str) -> str:
+    """Python mirror of the `client` dimension CEL rendered from CLIENT_RULES."""
+    for label, conds in CLIENT_RULES:
+        if any(ua.startswith(s) if op == "startsWith" else s in ua for op, s in conds):
+            return label
+    return CLIENT_OTHER
 
 
 CLIENT_FOR_UA: dict[str, str] = {

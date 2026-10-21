@@ -222,7 +222,7 @@ def test_user_agents_map_to_intended_client():
         for ua in uas:
             assert CLIENT_FOR_UA[ua] == client_for_ua(ua) == want[tool]
     for ua in CI_USER_AGENTS:
-        assert "sdk-cli" in ua and CLIENT_FOR_UA[ua] == "Claude Code"
+        assert "sdk-cli" in ua and CLIENT_FOR_UA[ua] == "Claude Code (CI)"
     o = build_org(); rng = random.Random(2)
     for k in o.keys:
         ua = sample_request(k, at(2026, 10, 20, 11), rng).user_agent
