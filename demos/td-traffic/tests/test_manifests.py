@@ -88,13 +88,19 @@ def test_budgets_cover_teams_groups_org(org, objs, budgets):
     (b,) = kind(objs, "EnterpriseAgentgatewayBudget")
     assert b["metadata"]["name"] == "td-budgets"
     entries = b["spec"]["budgets"]
-    assert entries == budgets and len(entries) == 21
-    assert len({e["name"] for e in entries}) == 21
+    assert entries == budgets and len(entries) == 41 <= 64
+    assert len({e["name"] for e in entries}) == 41
+    tok = [e for e in entries if e["limit"]["unit"] == "Tokens"]
+    usd = [e for e in entries if e["limit"]["unit"] == "USD"]
+    assert len(tok) == 3 and len(usd) == 38
     for e in entries:
-        assert e["onBudgetExceeded"] == "Audit" and e["window"] == {"unit": "Month"}
-        assert e["limit"]["unit"] == "USD"
-        assert isinstance(e["limit"]["amount"], int) and e["limit"]["amount"] >= 1
-    subjects = [e["subject"] for e in entries]
+        assert e["onBudgetExceeded"] == "Audit"
+        assert e["window"] == ({"unit": "Day"} if e in tok else {"unit": "Month"})
+        assert isinstance(e["limit"]["amount"], int) and 1 <= e["limit"]["amount"] <= 4294967295
+    assert all(list(e["subject"]) == ["team"] for e in tok)
+    subjects = [e["subject"] for e in usd]
+    assert sorted(s["project"] for s in subjects if "project" in s) == sorted(org.projects)
+    assert len([s for s in subjects if "user" in s]) == 5
     assert sorted(s["team"] for s in subjects if "team" in s) == sorted(org.teams)
     assert sorted(s["group"] for s in subjects if "group" in s) == sorted(org.groups)
     assert [s for s in subjects if "organization" in s] == [{"organization": "TD"}]
@@ -105,7 +111,17 @@ def _mix_ok(budgets, spend):
     pct = {}
     for e in budgets:
         (dim, val), = e["subject"].items()
+        if e["limit"]["unit"] == "Tokens":
+            p = spend["team_tokens_day"][val] / e["limit"]["amount"]
+            assert 0.50 <= p <= 0.90, ("tokens", val, p)          # a typical day at 50-90%
+            continue
         pct[(dim, val)] = float(spend[dim][val]) / e["limit"]["amount"]
+    proj = [p for (d, _), p in pct.items() if d == "project"]
+    assert len(proj) == 12
+    assert sum(1.0 <= p <= 1.30 for p in proj) >= 1, sorted(proj)
+    assert sum(0.85 <= p <= 0.95 for p in proj) >= 1, sorted(proj)
+    usr = [p for (d, _), p in pct.items() if d == "user"]
+    assert len(usr) == 5 and sum(0.85 <= p <= 0.95 for p in usr) >= 1, sorted(usr)
     team = [p for (d, _), p in pct.items() if d == "team"]
     assert len(team) == 15
     over = sum(1.0 <= p <= 1.30 for p in team)

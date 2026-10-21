@@ -36,8 +36,8 @@ from typing import Callable, Iterator
 
 from .live import Gateway, Sender, send_with_reconnect, urllib_sender, Stats
 from .manifests import (BUDGET, HOSTNAME, NAMESPACE, budget_window, group_budget_name, org_budget_name,
-                        team_budget_name)
-from .org import Org
+                        project_budget_name, team_budget_name, token_budget_name, token_limit, user_budget_name)
+from .org import Org, service_identity
 from .pricing import Rates
 from .usage import MAX_OUTPUT, MODELS, Request, cost, generate, sample_request
 
@@ -67,15 +67,45 @@ def budget_window_start(now: datetime) -> datetime:
 
 # ---------------------------------------------------------------- targets from the generated history
 
-def _history(org: Org, rates: dict[tuple[str, str], Rates], start: datetime, now: datetime,
-             seed: int) -> dict[str, dict[str, Decimal]]:
-    """{team: {route_id: USD}} of successful generated requests in [start, now)."""
+def _key_history(org: Org, rates: dict[tuple[str, str], Rates], start: datetime, now: datetime,
+                 seed: int) -> dict[str, dict[str, Decimal]]:
+    """{key id: {route_id: USD}} of successful generated requests in [start, now)."""
     rid = {m.route: r for r, m in MODELS.items()}
     out: dict[str, dict[str, Decimal]] = defaultdict(lambda: defaultdict(Decimal))
     for r in generate(org, start, now, seed):
         if r.status == 200:
-            out[r.key.team][rid[r.route.route]] += cost(r, rates)["total"]
+            out[r.key.id][rid[r.route.route]] += cost(r, rates)["total"]
     return out
+
+
+def _by_team(org: Org, khist: dict[str, dict[str, Decimal]]) -> dict[str, dict[str, Decimal]]:
+    team = {k.id: k.team for k in org.keys}
+    out: dict[str, dict[str, Decimal]] = defaultdict(lambda: defaultdict(Decimal))
+    for kid, m in khist.items():
+        for r, v in m.items():
+            out[team[kid]][r] += v
+    return out
+
+
+def _history(org: Org, rates: dict[tuple[str, str], Rates], start: datetime, now: datetime,
+             seed: int) -> dict[str, dict[str, Decimal]]:
+    """{team: {route_id: USD}} of successful generated requests in [start, now)."""
+    return _by_team(org, _key_history(org, rates, start, now, seed))
+
+
+def key_targets(org: Org, khist: dict[str, dict[str, Decimal]]) -> dict[str, float]:
+    return {k.id: float(sum(khist.get(k.id, {}).values())) for k in org.keys}
+
+
+def _targets_from_keys(org: Org, per_key: dict[str, float]) -> dict[str, float]:
+    """Every budget entry name -> USD, summed from per-key spend (team, group, org, project, user agree)."""
+    out: dict[str, float] = defaultdict(float)
+    for k in org.keys:
+        v = per_key.get(k.id, 0.0)
+        for n in (org_budget_name(org.name), group_budget_name(k.group), team_budget_name(k.team),
+                  project_budget_name(k.project), user_budget_name(service_identity(k))):
+            out[n] += v
+    return dict(out)
 
 
 def _targets_from(org: Org, hist: dict[str, dict[str, Decimal]]) -> dict[str, float]:
@@ -85,6 +115,18 @@ def _targets_from(org: Org, hist: dict[str, dict[str, Decimal]]) -> dict[str, fl
         out[group_budget_name(g)] = sum(v for t, v in team.items() if org.teams[t] == g)
     for t, v in team.items():
         out[team_budget_name(t)] = v
+    return out
+
+
+def key_gaps(org: Org, team_gaps: dict[str, float], per_key: dict[str, float]) -> dict[str, float]:
+    """Each team's gap split over its keys by their share of the team's target, so the project and user
+    counters end up at their targets too (one request charges every matching entry)."""
+    out = {}
+    for t, gap in team_gaps.items():
+        keys = [k for k in org.keys if k.team == t]
+        tot = sum(per_key.get(k.id, 0.0) for k in keys)
+        for k in keys:
+            out[k.id] = gap * (per_key.get(k.id, 0.0) / tot if tot else 1 / len(keys))
     return out
 
 
@@ -158,6 +200,37 @@ def plan_requests(org: Org, rates: dict[tuple[str, str], Rates], gaps: dict[str,
             usd = left if i == len(routes) - 1 else gap / n
             inp, outp = _tokens_for(usd, r)
             req = Request(now, keys[i % len(keys)], dataclasses.replace(m, route=m.route + MARKER_SEGMENT),
+                          MARKER_UA, inp, outp, 0, 20, 200)
+            left -= cost(req, rates)["total"]
+            out.append(req)
+    return out
+
+
+MAX_REQUESTS_PER_KEY = 6
+
+
+def plan_key_requests(org: Org, rates: dict[tuple[str, str], Rates], gaps: dict[str, float],
+                      mix: dict[str, dict[str, float]], now: datetime) -> list[Request]:
+    """Marker requests per key (<= MAX_REQUESTS_PER_KEY) whose gateway cost adds up to the key's gap."""
+    by_id = {k.id: k for k in org.keys}
+    out: list[Request] = []
+    for kid in sorted(gaps):
+        gap = Decimal(str(round(gaps[kid], 6)))
+        if gap < Decimal("0.01"):
+            continue
+        key = by_id[kid]
+        weights = _sync_weights(mix.get(key.team, {}))
+        plain = min(_usd(rates[(MODELS[r].catalog_provider, MODELS[r].catalog_model)], MAX_INPUT_TOKENS, MAX_OUTPUT)
+                    for r in weights)
+        n = min(MAX_REQUESTS_PER_KEY, max(1, math.ceil(gap / plain)))
+        left = gap
+        routes = _alloc(n, weights)
+        for i, rid in enumerate(routes):
+            m = MODELS[rid]
+            r = rates[(m.catalog_provider, m.catalog_model)]
+            usd = left if i == len(routes) - 1 else gap / n
+            inp, outp = _tokens_for(usd, r)
+            req = Request(now, key, dataclasses.replace(m, route=m.route + MARKER_SEGMENT),
                           MARKER_UA, inp, outp, 0, 20, 200)
             left -= cost(req, rates)["total"]
             out.append(req)
@@ -282,7 +355,13 @@ def _norm(c: dict) -> dict[str, dict]:
 def _kind(org: Org, name: str) -> str:
     if name == org_budget_name(org.name):
         return "org"
-    return "group" if name in {group_budget_name(g) for g in org.groups} else "team"
+    if name in {group_budget_name(g) for g in org.groups}:
+        return "group"
+    if name in {project_budget_name(p) for p in org.projects}:
+        return "proj"
+    if name in {token_budget_name(t) for t in org.teams}:
+        return "tok"
+    return "team" if name in {team_budget_name(t) for t in org.teams} else "user"
 
 
 class SyncError(RuntimeError):
@@ -357,24 +436,24 @@ def run_sync(kube, org: Org, *, rates: dict[tuple[str, str], Rates], seed: int, 
             hist_end = min(now, end) if end is not None else start
         log(f"sync-budgets: budget window {start:%Y-%m-%d %H:%M} UTC; generated history (seed {seed}) "
             f"up to {hist_end:%Y-%m-%d %H:%M} UTC (backfill end)")
-        hist = _history(org, rates, start, hist_end, seed)
-        generated = _targets_from(org, hist)
+        khist = _key_history(org, rates, start, hist_end, seed)
+        hist = _by_team(org, khist)
+        gen_keys = key_targets(org, khist)
         mix = {t: {r: float(v) for r, v in m.items()} for t, m in hist.items()}
+        per_key: dict[str, float] = dict(gen_keys)
 
         def targets_now() -> dict[str, float]:
-            live = ch.td_live_spend_by_team(start, exclude=sync_span_predicate()) if ch is not None else {}
+            live = ch.td_live_spend_by_key(start, exclude=sync_span_predicate()) if ch is not None else {}
             if ch is not None:
                 log(f"sync-budgets: live TD spend recorded in ClickHouse this window: ${sum(live.values()):,.2f}")
-            t = dict(generated)
-            for team in org.teams:
-                extra = live.get(team, 0.0)
-                for n in (team_budget_name(team), group_budget_name(org.teams[team]), org_budget_name(org.name)):
-                    t[n] += extra
-            return t
+            per_key.clear()
+            per_key.update({k: v + live.get(k, 0.0) for k, v in gen_keys.items()})
+            return _targets_from_keys(org, per_key)
 
         def plan(before: dict, targets: dict) -> list[Request]:
             gaps = {t: targets[team_budget_name(t)] - _spent(before, team_budget_name(t)) for t in org.teams}
-            reqs = plan_requests(org, rates, gaps, mix, now)
+            gaps = {t: g for t, g in gaps.items() if g >= MIN_GAP}
+            reqs = plan_key_requests(org, rates, key_gaps(org, gaps, per_key), mix, now)
             total = sum(cost(r, rates)["total"] for r in reqs)
             per = max((sum(1 for r in reqs if r.key.team == t) for t in org.teams), default=0)
             log(f"sync-budgets: {len(reqs)} marker requests on {len({r.key.team for r in reqs})} teams, "
@@ -413,14 +492,38 @@ def run_sync(kube, org: Org, *, rates: dict[tuple[str, str], Rates], seed: int, 
                 sleep(5)
             else:
                 log("sync-budgets: WARNING the Budgets page has not caught up yet; the table shows its current values")
+            resize_token_budgets(kube, org, after, log)
     rows = []
-    for name in targets:
+    for name in [n for n in after if _kind(org, n) == "tok"]:
+        targets.setdefault(name, _spent(after, name))
+    for name in [n for n in targets if n in after or n in before or _kind(org, n) != "user"]:
         lim = after.get(name, {}).get("limit") or before.get(name, {}).get("limit")
         spent = _spent(after, name)
         rows.append({"name": name, "kind": _kind(org, name), "limit": lim, "target": targets[name],
                      "before": _spent(before, name), "after": spent,
                      "pct": (100 * spent / lim) if lim else None})
     return rows
+
+
+def resize_token_budgets(kube, org: Org, counters: dict[str, dict], log) -> None:
+    """Daily Tokens entries: re-size the limit on today's counter (the markers charge tokens too), 60-80%."""
+    rng = random.Random()
+    if not any(_kind(org, n) == "tok" and _spent(counters, n) > 0 for n in counters):
+        return
+    obj = json.loads(kube.run(["get", "enterpriseagentgatewaybudget", BUDGET, "-n", NAMESPACE, "-o", "json"]))
+    changed = []
+    for e in obj["spec"]["budgets"]:
+        if e["limit"].get("unit") == "Tokens" and _spent(counters, e["name"]) > 0:
+            e["limit"]["amount"] = token_limit(_spent(counters, e["name"]), rng)
+            counters[e["name"]]["limit"] = e["limit"]["amount"]
+            changed.append(e["name"])
+    if changed:
+        for k in ("resourceVersion", "uid", "creationTimestamp", "generation", "managedFields"):
+            obj["metadata"].pop(k, None)
+        obj["metadata"].get("annotations", {}).pop("kubectl.kubernetes.io/last-applied-configuration", None)
+        obj.pop("status", None)
+        kube.apply([obj])
+        log(f"sync-budgets: re-sized {len(changed)} daily token budgets on today's counters")
 
 
 def _purge_markers(ch, expected: int, log, sleep) -> None:
@@ -449,10 +552,10 @@ def format_table(rows: list[dict]) -> str:
         if p is None:
             return "?"
         return "OVER" if p >= 100 else "near" if p >= 85 else "under"
-    order = {"org": 0, "group": 1, "team": 2}
+    order = {"org": 0, "group": 1, "team": 2, "proj": 3, "user": 4, "tok": 5}
     lines = [f"{'budget':45} {'kind':5} {'limit':>9} {'target':>11} {'before':>11} {'after':>11} {'% limit':>8}  status"]
     for r in sorted(rows, key=lambda r: (order[r["kind"]], r["name"])):
-        lim = f"{r['limit']:,}" if r["limit"] else "?"
+        lim = f"{int(r['limit']):,}" if r["limit"] else "?"
         pct = f"{r['pct']:.1f}%" if r["pct"] is not None else "?"
         lines.append(f"{r['name']:45} {r['kind']:5} {lim:>9} {r['target']:>11,.2f} {r['before']:>11,.2f} "
                      f"{r['after']:>11,.2f} {pct:>8}  {status(r['pct'])}")

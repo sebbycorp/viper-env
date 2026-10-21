@@ -265,4 +265,4 @@ def test_cli_replan_budgets_applies_only_budgets(monkeypatch):
     monkeypatch.setattr(td, "Kube", K)
     assert td.main(["replan-budgets", "--context", "CTX"]) == 0
     assert [o["kind"] for o in applied] == ["EnterpriseAgentgatewayBudget"]
-    assert len(applied[0]["spec"]["budgets"]) == 21
+    assert len(applied[0]["spec"]["budgets"]) == 41

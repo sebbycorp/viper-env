@@ -214,6 +214,18 @@ class ClickHouse:
             + f"AND SpanName LIKE 'POST %' AND TraceId IN {self._OUTCOME_TRACES.format(lo=lo)} GROUP BY team")
         return {r["team"]: float(r["usd"]) for r in rows if r["team"]}
 
+    def td_live_spend_by_key(self, window_start: datetime, exclude: str | None = None) -> dict[str, float]:
+        """USD per virtual key of live TD requests (traces with an outcome span) since window_start."""
+        lo = _q(_sql_ts(window_start - timedelta(hours=1)))
+        key = self._TEAM.replace("'team'", "'virtualKey'")
+        rows = self.json_rows(
+            f"SELECT {key} AS vk, toString(sum(toDecimal128OrZero(toString("
+            f"SpanAttributes.`agw.ai.usage.cost.total`), 9))) AS usd FROM {SPANS_TABLE} "
+            f"WHERE Timestamp >= toDateTime64({_q(_sql_ts(window_start))}, 9, 'UTC') AND {td_span_predicate()} "
+            + (f"AND NOT {exclude} " if exclude else "")
+            + f"AND SpanName LIKE 'POST %' AND TraceId IN {self._OUTCOME_TRACES.format(lo=lo)} GROUP BY vk")
+        return {r["vk"]: float(r["usd"]) for r in rows if r["vk"]}
+
     def cluster_name(self, default: str) -> str:
         """`cluster_name` of the most recent real (non-TD) agentgateway-proxy span, else `default`."""
         rows = self.json_rows(

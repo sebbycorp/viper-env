@@ -8,8 +8,9 @@ from pathlib import Path
 import pytest
 
 from tdlib import budget_sync as bs
-from tdlib.manifests import group_budget_name, org_budget_name, team_budget_name
-from tdlib.org import build_org
+from tdlib.manifests import (group_budget_name, org_budget_name, project_budget_name, team_budget_name,
+                             user_budget_name)
+from tdlib.org import build_org, service_identity
 from tdlib.pricing import load_rates
 from tdlib.spans import td_span_predicate
 from tdlib.usage import MODELS, client_for_ua, cost, generate
@@ -52,6 +53,15 @@ class FakeCH:
                 out[r.key.team] += float(cost(r, RATES)["total"])
         return dict(out)
 
+    def td_live_spend_by_key(self, window_start, exclude=None):
+        out = defaultdict(float)
+        for team, v in self.live_extra.items():
+            out[sorted(k.id for k in ORG.keys if k.team == team)[0]] += v
+        for r in self.sent:
+            if r.user_agent != bs.MARKER_UA:
+                out[r.key.id] += float(cost(r, RATES)["total"])
+        return dict(out)
+
     def count_td(self, predicate=None):
         self.counts.append(predicate)
         return 0 if self.purges else len(self.sent)
@@ -77,7 +87,8 @@ class FakeCounters:
         out = {n: float(v) for n, v in self.base.items()}
         for r in self.sent:
             c = float(cost(r, RATES)["total"])
-            for n in (team_budget_name(r.key.team), group_budget_name(r.key.group), org_budget_name("TD")):
+            for n in (team_budget_name(r.key.team), group_budget_name(r.key.group), org_budget_name("TD"),
+                      project_budget_name(r.key.project), user_budget_name(service_identity(r.key))):
                 out[n] = out.get(n, 0.0) + c
         return out
 
@@ -149,7 +160,7 @@ def test_sync_subtracts_counters_and_closes_the_gap():
         # counter after the markers (before the closing refresh request) == generated + recorded live spend
         assert after[name]["after"] - last_refresh[team] == pytest.approx(after[name]["target"], rel=1e-4, abs=0.01)
         assert after[name]["target"] > target[name]          # the refresh before reading is live spend
-    assert {r["name"] for r in rows} == set(target)
+    assert {r["name"] for r in rows if r["kind"] in ("org", "group", "team")} == set(target)
 
 
 def test_sync_sends_marker_ua():
@@ -181,7 +192,8 @@ def test_sync_route_mix_follows_team_history():
         opus = sum(1 for r in rs if r.route.model == MODELS["bedrock-opus"].model)
         assert opus + sum(1 for r in rs if r.route.model == MODELS["azure-gpt"].model) == len(rs)
         share = mix[team].get("bedrock-opus", 0) / sum(mix[team].values())
-        assert abs(opus - share * len(rs)) <= 1          # Opus requests in the team's Opus spend share
+        nkeys = len({r.key.id for r in rs})              # split per key now: rounding per key
+        assert abs(opus - share * len(rs)) <= max(1, nkeys)  # Opus requests in the team's Opus spend share
         shares.append(share)
     assert min(shares) < 0.5 < max(shares)               # the mix really differs between teams
 
@@ -340,3 +352,30 @@ def test_sync_skips_gaps_under_one_dollar():
     reqs = bs.plan_requests(ORG, RATES, {"Fraud Strategy": 0.99, "Retail Deposits": 1.5},
                             {"Fraud Strategy": {"bedrock-opus": 1.0}, "Retail Deposits": {"azure-gpt": 1.0}}, NOW)
     assert {r.key.team for r in reqs} == {"Retail Deposits"}
+
+
+def test_sync_lines_up_project_and_user_counters():
+    """Gaps go out per key, so project and user counters reach their generated targets too."""
+    start = NOW - timedelta(hours=6)
+    rows, sent, _ = run({}, start=start)
+    after = {r["name"]: r for r in rows}
+    refresh = defaultdict(float)
+    for r in sent:
+        if not is_marker(r):
+            refresh[project_budget_name(r.key.project)] += float(cost(r, RATES)["total"])
+            refresh[user_budget_name(service_identity(r.key))] += float(cost(r, RATES)["total"])
+    projects = [n for n, r in after.items() if r["kind"] == "proj"]
+    assert len(projects) == 12
+    for n in projects:
+        # counter minus the closing refresh request(s) == target (generated + live)
+        assert after[n]["after"] - refresh[n] / 2 == pytest.approx(after[n]["target"], rel=0.02, abs=1.0)
+
+
+def test_key_gaps_split_by_key_share():
+    keys = [k for k in ORG.keys if k.team == "Fraud Strategy"]
+    per_key = {k.id: float(i + 1) for i, k in enumerate(keys)}
+    g = bs.key_gaps(ORG, {"Fraud Strategy": 100.0}, per_key)
+    assert sum(g.values()) == pytest.approx(100.0)
+    tot = sum(per_key.values())
+    for k in keys:
+        assert g[k.id] == pytest.approx(100.0 * per_key[k.id] / tot)

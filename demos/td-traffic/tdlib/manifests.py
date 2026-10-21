@@ -97,14 +97,24 @@ def window_spend(org: Org, rates: dict[tuple[str, str], Rates], seed: int,
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     start, _ = budget_window(now)
     team: dict[str, float] = defaultdict(float)
+    project: dict[str, float] = defaultdict(float)
+    user: dict[str, float] = defaultdict(float)
+    tokens: dict[str, float] = defaultdict(float)
     for r in generate(org, start, now, seed):
         if r.status == 200:
-            team[r.key.team] += float(cost(r, rates)["total"])
+            usd = float(cost(r, rates)["total"])
+            team[r.key.team] += usd
+            project[r.key.project] += usd
+            user[service_identity(r.key)] += usd
+            tokens[r.key.team] += r.input_tokens + r.output_tokens
+    days = max((now - start).total_seconds() / 86400, 1.0)
     team = {t: team[t] for t in org.teams}
     group = {g: 0.0 for g in org.groups}
     for t, v in team.items():
         group[org.teams[t]] += v
-    return {"team": team, "group": group, "organization": {org.name: sum(team.values())}}
+    return {"team": team, "group": group, "organization": {org.name: sum(team.values())},
+            "project": {p: project[p] for p in org.projects}, "user": dict(user),
+            "team_tokens_day": {t: tokens[t] / days for t in org.teams}}
 
 
 def _limit(projected: float, target: float, lo: float, hi: float) -> int:
@@ -128,19 +138,43 @@ def team_budget_name(team: str) -> str:
     return f"team-{_slug(team)}-monthly-usd"
 
 
+def project_budget_name(project: str) -> str:
+    return f"project-{_slug(project)}-monthly-usd"
+
+
+def user_budget_name(user: str) -> str:
+    return f"user-{_slug(user.split('@')[0].replace('.', '-'))}-monthly-usd"
+
+
+def token_budget_name(team: str) -> str:
+    return f"team-{_slug(team)}-daily-tokens"
+
+
+MAX_TOKENS = 4_294_967_295                       # CRD max for a Tokens limit (NOTES.md)
+N_USER_BUDGETS, N_TOKEN_BUDGETS = 5, 3
+
+
+def token_limit(tokens: float, rng: random.Random) -> int:
+    """A round Tokens limit putting `tokens` at 55-85% of it (50-90% after rounding), <= MAX_TOKENS."""
+    raw = tokens / rng.uniform(0.60, 0.80)
+    step = 10 ** max(0, len(str(int(raw))) - 2)
+    return int(min(MAX_TOKENS, max(1000, round(raw / step) * step)))
+
+
 def budget_entry_names(org_name: str, group: str, team: str) -> list[str]:
     """The three budget entries (org, group, team) a TD request matches, as plan_budgets names them."""
     return [org_budget_name(org_name), group_budget_name(group), team_budget_name(team)]
 
 
-def _entry(name: str, subject: dict[str, str], amount: int) -> dict:
-    return {"name": name, "subject": subject, "limit": {"amount": amount, "unit": "USD"},
-            "window": {"unit": "Month"}, "onBudgetExceeded": "Audit"}
+def _entry(name: str, subject: dict[str, str], amount: int, unit: str = "USD", window: str = "Month") -> dict:
+    return {"name": name, "subject": subject, "limit": {"amount": amount, "unit": unit},
+            "window": {"unit": window}, "onBudgetExceeded": "Audit"}
 
 
 def plan_budgets(org: Org, rates: dict[tuple[str, str], Rates], seed: int,
                  now: datetime | None = None) -> list[dict]:
-    """21 monthly Audit USD budgets: 1 org, 5 groups, 15 teams, sized on window-to-date spend.
+    """41 Audit budgets: monthly USD for 1 org, 5 groups, 15 teams, 12 projects, the top 5 users; daily Tokens
+    for the 3 biggest teams. Sized on window-to-date spend.
 
     Against `window_spend` (what the counters hold after backfill + sync-budgets): teams 2 at 100-130%,
     2 at 85-95%, the rest under 75%; groups and org 60-90%. Re-planned on every `up` / `replan-budgets`;
@@ -167,6 +201,34 @@ def plan_budgets(org: Org, rates: dict[tuple[str, str], Rates], seed: int,
             else:
                 amount = _limit(p, rng.uniform(0.35, 0.65), 0.05, 0.74)
             out.append(_entry(team_budget_name(t), {"team": t}, amount))
+
+    # 12 projects: 1 over, 1 near, the rest under.
+    pranked = sorted(org.projects, key=lambda p: -proj["project"][p])
+    p_over = rng.choice(pranked[:4])
+    p_near = rng.choice([p for p in pranked[:8] if p != p_over])
+    for p in org.projects:
+        v = proj["project"][p]
+        if p == p_over:
+            amount = _limit(v, rng.uniform(1.08, 1.20), 1.02, 1.28)
+        elif p == p_near:
+            amount = _limit(v, rng.uniform(0.88, 0.92), 0.86, 0.94)
+        else:
+            amount = _limit(v, rng.uniform(0.40, 0.70), 0.05, 0.74)
+        out.append(_entry(project_budget_name(p), {"project": p}, amount))
+
+    # Top 5 spenders (by user identity): 1 near, the rest under.
+    top = sorted(proj["user"], key=lambda u: -proj["user"][u])[:N_USER_BUDGETS]
+    u_near = rng.choice(top)
+    for u in top:
+        v = proj["user"][u]
+        amount = (_limit(v, rng.uniform(0.88, 0.92), 0.86, 0.94) if u == u_near
+                  else _limit(v, rng.uniform(0.40, 0.70), 0.05, 0.74))
+        out.append(_entry(user_budget_name(u), {"user": u}, amount))
+
+    # Daily token budgets for the 3 biggest teams, at 60-80% of a typical day (re-sized by sync-budgets).
+    for t in ranked[:N_TOKEN_BUDGETS]:
+        out.append(_entry(token_budget_name(t), {"team": t}, token_limit(proj["team_tokens_day"][t], rng),
+                          unit="Tokens", window="Day"))
     return out
 
 
