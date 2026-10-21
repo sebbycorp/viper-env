@@ -161,6 +161,7 @@ UI auth.
   - Copilot users: a few dollars a day each.
   - Claude Desktop users: in between.
   - Org total: **over $10k per 7 days** (user requirement, 2026-10-21), so roughly $45–75k a month. Scale per-user usage up to hit it.
+- **Shared team keys** (user addition): 4 teams also have one shared team virtual key, used by headless Claude Code in CI on Bedrock Opus, attributed to `svc-<team>@td.com`.
   - Keep total row volume modest: well under about 300k spans for 7 days.
   - Errors: about 1–2% 4xx/5xx, including some 429s.
   - Weekends: low.
