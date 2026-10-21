@@ -160,7 +160,7 @@ UI auth.
     agentic-context prompts.
   - Copilot users: a few dollars a day each.
   - Claude Desktop users: in between.
-  - Org total: wherever that lands, probably about $20–35k a month.
+  - Org total: **over $10k per 7 days** (user requirement, 2026-10-21), so roughly $45–75k a month. Scale per-user usage up to hit it.
   - Keep total row volume modest: well under about 300k spans for 7 days.
   - Errors: about 1–2% 4xx/5xx, including some 429s.
   - Weekends: low.

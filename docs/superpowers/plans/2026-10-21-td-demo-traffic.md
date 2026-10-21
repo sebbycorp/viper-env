@@ -242,7 +242,7 @@ def test_volume_and_spend_are_realistic():
     end = at(2026,10,21,0); reqs = list(generate(o, end - timedelta(days=7), end, seed=7))
     assert 20_000 < len(reqs) < 300_000
     spend = sum(cost(r, rates)["total"] for r in reqs)
-    assert 3_000 < spend < 12_000           # ≈ $20–35k/month org total
+    assert 10_000 < spend < 18_000          # user: 10k+ per 7 days (≈ $45–75k/month)
     errs = sum(r.status >= 400 for r in reqs) / len(reqs)
     assert 0.005 < errs < 0.03 and any(r.status == 429 for r in reqs)
 
