@@ -162,6 +162,7 @@ UI auth.
   - Copilot users: a few dollars a day each.
   - Claude Desktop users: in between.
   - Org total: **over $10k per 7 days** (user requirement, 2026-10-21), so roughly $45–75k a month. Scale per-user usage up to hit it.
+- **Clients** (user addition, 2026-10-21): four client tools, plus CI. GitHub Copilot (16 users) → Azure GPT. **VS Code** (6 users, AI extensions such as Continue/Cline with BYOK) → Azure GPT and Mistral Large; this replaces "Copilot BYOK → Mistral". Claude Code (9) → Bedrock Opus. Claude Desktop (4) → Bedrock Opus.
 - **Shared team keys** (user addition): 4 teams also have one shared team virtual key, used by headless Claude Code in CI on Bedrock Opus, attributed to `svc-<team>@td.com`.
   - Keep total row volume modest: well under about 300k spans for 7 days.
   - Errors: about 1–2% 4xx/5xx, including some 429s.
