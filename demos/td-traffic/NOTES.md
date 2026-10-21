@@ -398,9 +398,66 @@ input + output (48,213 + 1,873). For USD-only budgets, the value of `unit` is pr
   `agw.ai.budgets.applied=true`, `count=2`, `ids=["td-demo/td-spike-budget/<name>",…]`
   and `action_taken=AUDIT`. Over-limit requests still return 200.
 - `notifications[]` (Slack/Webhook) also exists but was not used.
-- Budget spend counts only traffic that passes through the gateway. Backfilled spans will
-  show in the cost graphs but will **not** count toward budget `spent`; this was not
-  checked. Task 7 needs to decide whether that matters.
+- Budget spend counts only traffic that passes through the gateway. Backfilled spans
+  show in the cost graphs but do **not** count toward budget `spent`. **Verified in Task 7**
+  (see "Budgets and backfilled history" below).
+
+## Budgets and backfilled history (verified, Task 7)
+
+**The Budgets page counts only the proxy's live budget counters, not ClickHouse history.**
+Checked on omni-viper on 2026-10-21, right after a 30-day backfill of 559,202 TD spans
+($51,313.70 of TD spend in ClickHouse; Cost Management showed $51.3K for 30d):
+- `AgentgatewayCostAPI/ListBudgets` (decoded grpc-web response) gave the org entry
+  `td-org-monthly-usd` a spent value of **$1.370512** against its $71,000 limit. Every
+  other entry was in the same range (0–$0.87). The page showed "1 Within budget,
+  0 Exceeding" and empty usage bars.
+- $1.370512 is exactly the Task 5 live check traffic: 2 × 20 requests
+  (5 × $0.1258) plus the $0.112512 curl. Those spans had already been purged from
+  ClickHouse when this was read, so the number does not come from ClickHouse at all.
+- So budget `spent` comes from gateway-side counters charged per live request (the
+  `charged_micro_usd` path), not from spans. Writing spans, and the
+  `agw.ai.budgets.*` attributes inside them, does not move it. The budget counters are
+  **not** faked (ruling).
+
+What this means for the demo:
+- Right after `up` + `backfill`, every budget shows about 0% used, even though the 30-day
+  cost graphs show tens of thousands of dollars. The planned mix (2 over, 2 near, the rest
+  under) only appears once enough **live** traffic has passed through the gateway in the
+  current calendar month.
+- `plan_budgets` sizes limits from the projected *full-month* spend (history + forecast).
+  Live traffic alone will not get close to those limits during a demo. The README (Task 9)
+  must say this. Two ways to get "over/near" budgets on demo day: size limits on
+  expected live spend (e.g. a few dollars for the over/near teams), or show the per-team
+  spend graphs against the limits instead of the Budgets usage bars.
+
+## Backfill and purge (Task 7)
+
+- `td.py backfill --context C [--days 30] [--replace]` streams `generate()` → `spans.to_row`
+  → gzip JSONEachRow `INSERT INTO platformdb.otel_traces_json` in 20k batches over a
+  port-forward to `management-clickhouse-shard0-0:8123`. The MVs fan out into
+  `agw_spans_typed`, `agw_chat_spans`, `trace_time_index` and the 8 `agw_*_5m` rollups.
+  30 days ≈ 559k rows, about 4–5 minutes on omni-viper, ~240 bytes/row gzipped.
+  `otel_traces_json` has no row TTL (only Events/Links columns, 7 days), so 30 days stay.
+- `backfill` refuses when any TD span exists (`td_span_predicate()`); `--replace` purges first.
+- `td_span_predicate()`: custom_dimensions contains `["organization","TD"]` **or**
+  `server.address = 'td.demo.local'` (also catches 401s and the Task 4 spike spans).
+- Backfilled rows mirror the live TD spans (Task 5): dims sorted by id incl. `client` and
+  `virtualKey`; budgets `ids` = the 3 real `td-demo/td-budgets/<entry>` names (org, group,
+  team), `action_taken: ALLOW`, no `unit` (USD-only budgets); `cache_read.input_tokens`
+  always present; errors (429/4xx/5xx) carry zero costs and no `gen_ai.response`/`usage`,
+  like the live 429. `StatusCode` is `Error` for ≥ 500 (brief; live 5xx unobserved) and
+  `Unset` otherwise. `cluster_name` is read from the newest real `agentgateway-proxy` span.
+- The UI "Global Error Rate" stays 0% for live and backfilled TD errors alike: the
+  `agw_spans_typed_mv` reads `http.status`, while spans carry `http.response.status_code`.
+- `down --purge-history` (and `backfill --replace`) run `ClickHouse.purge_td()`:
+  snapshot the affected rollup range into `td_purge_backup.<table>__<stamp>` (plus the TD
+  span ids), record real totals (rollup − TD contribution), delete TD rows from
+  `agw_spans_typed`/`agw_chat_spans`, delete and re-insert the rollup range from the
+  cleaned source using each view's `as_select`, verify the real totals are identical, then
+  delete the TD source rows. It prints the restore SQL and `DROP DATABASE td_purge_backup`.
+  The newest 2 minutes (live edge) are not touched; if TD spans are there, it waits.
+- `trace_time_index` (outside `agw*`) is left alone, so it keeps orphan TraceIds of purged
+  TD traces (559k after one purge). They point at no spans.
 
 ## Mock deployment (worked)
 

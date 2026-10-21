@@ -12,8 +12,8 @@ from .org import Org, _slug, service_identity
 from .pricing import Rates
 from .usage import CLIENT_OTHER, CLIENT_RULES, MODELS, cost, generate
 
-__all__ = ["CLIENT_RULES", "DIMENSIONS_FILE", "NAMESPACE", "LABELS", "render_all", "plan_budgets",
-           "projected_spend", "render_dimensions_values", "client_cel"]
+__all__ = ["BUDGET", "CLIENT_RULES", "DIMENSIONS_FILE", "HOSTNAME", "NAMESPACE", "LABELS", "render_all",
+           "plan_budgets", "projected_spend", "render_dimensions_values", "client_cel", "budget_entry_names"]
 
 NAMESPACE = "td-demo"
 LABELS = {"demo": "td"}
@@ -111,6 +111,23 @@ def _limit(projected: float, target: float, lo: float, hi: float) -> int:
     return max(1, round(projected / target))
 
 
+def org_budget_name(org_name: str) -> str:
+    return f"{_slug(org_name)}-org-monthly-usd"
+
+
+def group_budget_name(group: str) -> str:
+    return f"{_slug(group)}-monthly-usd"
+
+
+def team_budget_name(team: str) -> str:
+    return f"team-{_slug(team)}-monthly-usd"
+
+
+def budget_entry_names(org_name: str, group: str, team: str) -> list[str]:
+    """The three budget entries (org, group, team) a TD request matches, as plan_budgets names them."""
+    return [org_budget_name(org_name), group_budget_name(group), team_budget_name(team)]
+
+
 def _entry(name: str, subject: dict[str, str], amount: int) -> dict:
     return {"name": name, "subject": subject, "limit": {"amount": amount, "unit": "USD"},
             "window": {"unit": "Month"}, "onBudgetExceeded": "Audit"}
@@ -128,10 +145,10 @@ def plan_budgets(org: Org, rates: dict[tuple[str, str], Rates], seed: int,
     over = rng.sample(ranked[:5], 2)
     near = rng.sample([t for t in ranked[:10] if t not in over], 2)
 
-    out = [_entry(f"{_slug(org.name)}-org-monthly-usd", {"organization": org.name},
+    out = [_entry(org_budget_name(org.name), {"organization": org.name},
                   _limit(proj["organization"][org.name], rng.uniform(0.70, 0.80), 0.61, 0.89))]
     for g in org.groups:
-        out.append(_entry(f"{_slug(g)}-monthly-usd", {"group": g},
+        out.append(_entry(group_budget_name(g), {"group": g},
                           _limit(proj["group"][g], rng.uniform(0.65, 0.85), 0.61, 0.89)))
     for g in org.groups:
         for t in (t for t in org.teams if org.teams[t] == g):
@@ -142,7 +159,7 @@ def plan_budgets(org: Org, rates: dict[tuple[str, str], Rates], seed: int,
                 amount = _limit(p, rng.uniform(0.88, 0.92), 0.86, 0.94)
             else:
                 amount = _limit(p, rng.uniform(0.35, 0.65), 0.05, 0.74)
-            out.append(_entry(f"team-{_slug(t)}-monthly-usd", {"team": t}, amount))
+            out.append(_entry(team_budget_name(t), {"team": t}, amount))
     return out
 
 

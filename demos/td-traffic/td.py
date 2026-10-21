@@ -10,26 +10,33 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import json
 import sys
 import tempfile
-import urllib.parse
-import urllib.request
+import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Iterator
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+from tdlib.clickhouse import SPANS_TABLE, ClickHouse, ClickHouseError  # noqa: E402
 from tdlib.kube import Kube, KubeError  # noqa: E402
 from tdlib.manifests import (  # noqa: E402
     DIMENSIONS_FILE, LABELS, MOCK, NAMESPACE, plan_budgets, render_all,
 )
 from tdlib.org import build_org  # noqa: E402
 from tdlib.pricing import load_rates  # noqa: E402
+from tdlib.spans import load_template, to_row  # noqa: E402
+from tdlib.usage import generate  # noqa: E402
 
 RATES_PATH = HERE.parents[1] / "apps/agentgateway-system/model-costs.yaml"
 MOCK_SOURCE = HERE / "mock/server.py"
 SEED = 42
+BACKFILL_DAYS = 30
+BATCH = 20_000
 
 RELEASE, RELEASE_NS = "enterprise-agentgateway", "agentgateway-system"
 CHART = "oci://us-docker.pkg.dev/solo-public/enterprise-agentgateway/charts/enterprise-agentgateway"
@@ -46,8 +53,6 @@ TD_KINDS = [
 ]
 STATUS_KINDS = [*TD_KINDS, "secrets", "configmaps", "deployments.apps", "services"]
 CH_POD, CH_SECRET = "pod/management-clickhouse-shard0-0", "management-clickhouse-auth"
-TD_SPANS_SQL = ("SELECT count() FROM platformdb.otel_traces_json "
-                "WHERE SpanAttributes.`server.address` = 'td.demo.local' FORMAT TSV")
 
 
 def log(msg: str) -> None:
@@ -145,18 +150,59 @@ def cmd_down(kube: Kube, args) -> int:
         log(f"deleted namespace {NAMESPACE}")
     elif p.returncode == 0:
         log(f"namespace {NAMESPACE} is not labeled demo=td; left in place")
+    if getattr(args, "purge_history", False):
+        with open_clickhouse(kube) as ch:
+            ch.purge_td(log=log)
     log("down: done")
     return 0
 
 
-def td_span_count(kube: Kube) -> int:
+@contextlib.contextmanager
+def open_clickhouse(kube: Kube) -> Iterator[ClickHouse]:
+    """ClickHouse over a port-forward to the management ClickHouse pod, credentials from its Secret."""
     sec = json.loads(kube.run(["get", "secret", CH_SECRET, "-n", RELEASE_NS, "-o", "json"]))["data"]
     user, pw = (base64.b64decode(sec[k]).decode() for k in ("username", "password"))
     with kube.port_forward(CH_POD, RELEASE_NS, 8123) as port:
-        req = urllib.request.Request(f"http://127.0.0.1:{port}/?" + urllib.parse.urlencode({"query": TD_SPANS_SQL}))
-        req.add_header("Authorization", "Basic " + base64.b64encode(f"{user}:{pw}".encode()).decode())
-        with urllib.request.urlopen(req, timeout=60) as r:
-            return int(r.read().decode().strip())
+        yield ClickHouse(f"http://127.0.0.1:{port}", user, pw)
+
+
+def td_span_count(kube: Kube) -> int:
+    with open_clickhouse(kube) as ch:
+        return ch.count_td()
+
+
+def run_backfill(ch, days: float, replace: bool, seed: int = SEED, batch: int = BATCH,
+                 now: datetime | None = None) -> int:
+    existing = ch.count_td()
+    if existing and not replace:
+        log(f"{existing} TD spans already in ClickHouse; refusing to add a second history. "
+            "Re-run with --replace to purge the TD history first.")
+        return 1
+    if existing:
+        log(f"--replace: purging {existing} existing TD spans first")
+        ch.purge_td(log=log)
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    start = now - timedelta(days=days)
+    template = load_template()
+    cluster = ch.cluster_name(template["ResourceAttributes"]["cluster_name"])
+    rates = load_rates(RATES_PATH)
+    log(f"backfill: {days:g} days {start:%Y-%m-%d %H:%M} .. {now:%Y-%m-%d %H:%M} UTC, cluster_name={cluster}, "
+        f"batches of {batch}")
+    t0 = time.monotonic()
+
+    def progress(n: int) -> None:
+        el = time.monotonic() - t0
+        log(f"backfill: {n:,} rows inserted ({el:.0f}s, {n / max(el, 1e-9):,.0f} rows/s)")
+
+    rows = (to_row(r, rates, template, cluster) for r in generate(build_org(), start, now, seed))
+    total = ch.insert_rows(SPANS_TABLE, rows, batch=batch, progress=progress)
+    log(f"backfill: done, {total:,} TD spans in {time.monotonic() - t0:.0f}s")
+    return 0
+
+
+def cmd_backfill(kube: Kube, args) -> int:
+    with open_clickhouse(kube) as ch:
+        return run_backfill(ch, args.days, args.replace, seed=args.seed, batch=args.batch)
 
 
 def cmd_status(kube: Kube, args) -> int:
@@ -169,7 +215,7 @@ def cmd_status(kube: Kube, args) -> int:
     log(f"saved Helm values: {'present' if saved_values(kube) is not None else 'absent'}")
     try:
         log(f"TD span rows in ClickHouse: {td_span_count(kube)}")
-    except (KubeError, OSError, ValueError) as e:
+    except (KubeError, ClickHouseError, OSError, ValueError) as e:
         log(f"TD span rows: unavailable ({e})")
     return 0
 
@@ -186,7 +232,7 @@ def main(argv: list[str] | None = None) -> int:
         ("up", cmd_up, "create the TD demo objects, keys, budgets and dimensions"),
         ("down", cmd_down, "restore Helm budgetDimensions and delete every TD object"),
         ("status", cmd_status, "count TD objects and TD span rows"),
-        ("backfill", cmd_todo, "write synthetic history (Task 7)"),
+        ("backfill", cmd_backfill, "write synthetic TD history straight into ClickHouse"),
         ("live", cmd_todo, "send live traffic (Task 8)"),
     ]:
         p = sub.add_parser(name, help=hlp)
@@ -194,10 +240,21 @@ def main(argv: list[str] | None = None) -> int:
         p.set_defaults(fn=fn)
         if name == "up":
             p.add_argument("--seed", type=int, default=SEED, help="budget projection seed")
+        if name == "backfill":
+            p.add_argument("--days", type=float, default=BACKFILL_DAYS,
+                           help=f"history length ending now (default {BACKFILL_DAYS})")
+            p.add_argument("--replace", action="store_true",
+                           help="purge the existing TD history first (otherwise backfill refuses)")
+            p.add_argument("--seed", type=int, default=SEED, help="traffic seed (same as `up` budget planning)")
+            p.add_argument("--batch", type=int, default=BATCH, help="rows per INSERT")
+        if name == "down":
+            p.add_argument("--purge-history", action="store_true",
+                           help="also delete every TD span from ClickHouse and recompute the affected rollups "
+                                "(rollups are snapshotted to td_purge_backup first)")
     args = ap.parse_args(argv)
     try:
         return args.fn(Kube(args.context), args)
-    except KubeError as e:
+    except (KubeError, ClickHouseError) as e:
         log(f"error: {e}")
         return 1
 
