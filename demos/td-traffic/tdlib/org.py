@@ -106,7 +106,7 @@ def build_org(seed: int = 42) -> Org:
     for i, name in enumerate(NAMES):
         team = team_names[i % len(team_names)]  # round-robin: every team used
         first, last = name.lower().split(" ", 1)
-        email = f"{first}.{_slug(last)}@td.com"
+        email = f"{first}.{_slug(last).replace('-', '.')}@td.com"
         users.append(User(email, name, teams[team], team, tools[i], persona(tools[i]), i in byok))
 
     keys: list[VirtualKey] = []
