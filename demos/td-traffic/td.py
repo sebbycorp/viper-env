@@ -152,7 +152,7 @@ def cmd_down(kube: Kube, args) -> int:
         log(f"namespace {NAMESPACE} is not labeled demo=td; left in place")
     if getattr(args, "purge_history", False):
         with open_clickhouse(kube) as ch:
-            ch.purge_td(log=log)
+            ch.purge_td(log=log, force_new_backup=args.force_new_backup)
     log("down: done")
     return 0
 
@@ -172,7 +172,7 @@ def td_span_count(kube: Kube) -> int:
 
 
 def run_backfill(ch, days: float, replace: bool, seed: int = SEED, batch: int = BATCH,
-                 now: datetime | None = None) -> int:
+                 now: datetime | None = None, force_new_backup: bool = False) -> int:
     existing = ch.count_td()
     if existing and not replace:
         log(f"{existing} TD spans already in ClickHouse; refusing to add a second history. "
@@ -180,7 +180,7 @@ def run_backfill(ch, days: float, replace: bool, seed: int = SEED, batch: int = 
         return 1
     if existing:
         log(f"--replace: purging {existing} existing TD spans first")
-        ch.purge_td(log=log)
+        ch.purge_td(log=log, force_new_backup=force_new_backup)
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     start = now - timedelta(days=days)
     template = load_template()
@@ -202,7 +202,8 @@ def run_backfill(ch, days: float, replace: bool, seed: int = SEED, batch: int = 
 
 def cmd_backfill(kube: Kube, args) -> int:
     with open_clickhouse(kube) as ch:
-        return run_backfill(ch, args.days, args.replace, seed=args.seed, batch=args.batch)
+        return run_backfill(ch, args.days, args.replace, seed=args.seed, batch=args.batch,
+                            force_new_backup=args.force_new_backup)
 
 
 def cmd_status(kube: Kube, args) -> int:
@@ -247,6 +248,9 @@ def main(argv: list[str] | None = None) -> int:
                            help="purge the existing TD history first (otherwise backfill refuses)")
             p.add_argument("--seed", type=int, default=SEED, help="traffic seed (same as `up` budget planning)")
             p.add_argument("--batch", type=int, default=BATCH, help="rows per INSERT")
+        if name in ("backfill", "down"):
+            p.add_argument("--force-new-backup", action="store_true",
+                           help="purge even though an earlier purge never finished (restore that one first!)")
         if name == "down":
             p.add_argument("--purge-history", action="store_true",
                            help="also delete every TD span from ClickHouse and recompute the affected rollups "
@@ -254,7 +258,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     try:
         return args.fn(Kube(args.context), args)
-    except (KubeError, ClickHouseError) as e:
+    except (KubeError, ClickHouseError, OSError) as e:
         log(f"error: {e}")
         return 1
 

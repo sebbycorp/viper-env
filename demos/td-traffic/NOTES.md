@@ -450,14 +450,25 @@ What this means for the demo:
 - The UI "Global Error Rate" stays 0% for live and backfilled TD errors alike: the
   `agw_spans_typed_mv` reads `http.status`, while spans carry `http.response.status_code`.
 - `down --purge-history` (and `backfill --replace`) run `ClickHouse.purge_td()`:
-  snapshot the affected rollup range into `td_purge_backup.<table>__<stamp>` (plus the TD
-  span ids), record real totals (rollup − TD contribution), delete TD rows from
-  `agw_spans_typed`/`agw_chat_spans`, delete and re-insert the rollup range from the
-  cleaned source using each view's `as_select`, verify the real totals are identical, then
-  delete the TD source rows. It prints the restore SQL and `DROP DATABASE td_purge_backup`.
-  The newest 2 minutes (live edge) are not touched; if TD spans are there, it waits.
-- `trace_time_index` (outside `agw*`) is left alone, so it keeps orphan TraceIds of purged
-  TD traces (559k after one purge). They point at no spans.
+  1. Freeze the TD span ids (`td_span_predicate()` AND older than the live edge = now − 2 min,
+     floored to 5 min) into `td_purge_backup.td_span_ids__<stamp>`. TD spans newer than that
+     are left for the next purge; if the newest TD span is at the edge, it waits once (≤ ~7 min).
+  2. Snapshot the affected rollup range into `td_purge_backup.<table>__<stamp>`, and the TD
+     rows of `trace_time_index` into `td_purge_backup.trace_time_index__<stamp>`. Ledger row
+     `started` in `td_purge_backup.__purges`.
+  3. Record real totals (rollup − TD contribution); delete TD traces from `agw_spans_typed`
+     / `agw_chat_spans`; delete and re-insert the rollup range from the cleaned source with
+     each view's `as_select`; verify the real totals are identical → ledger `verified`.
+  4. Delete TD trace ids from `trace_time_index` and the TD traces from `otel_traces_json` →
+     ledger `completed`. Prints the restore SQL and `DROP DATABASE td_purge_backup`.
+  - "TD traces" = TraceId in any frozen id table (`merge('td_purge_backup','^td_span_ids__')`),
+    limited to the recomputed time range. Trace ids are random and TD-only, so this also removes
+    the attribute-less second span of each live TD request (164 such spans from Tasks 4/5 were
+    removed on 2026-10-21) and the `trace_time_index` orphans left by earlier purges.
+  - Any failure after the snapshot prints that stamp's restore SQL and re-raises. A purge
+    refuses to start while an earlier stamp has `started` but no `verified` in the ledger, and
+    prints that stamp's restore SQL; `--force-new-backup` overrides (on `backfill` and `down`).
+    Stamps from before the ledger existed have no rows and never block.
 
 ## Mock deployment (worked)
 

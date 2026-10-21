@@ -8,8 +8,12 @@ cannot be filtered by TD, because real and TD spans share per-model rows. So `pu
   4. deletes the affected rollup range and re-inserts it from the cleaned source, using the
      view's own `as_select` (read from `system.tables`);
   5. verifies that the real totals are unchanged, and only then
-  6. deletes the TD source rows from `otel_traces_json` (`td_span_predicate()` only).
-Tables outside `platformdb.agw*` / `agentgateway_*` are never written.
+  6. deletes the TD trace ids from `trace_time_index` and the TD traces from `otel_traces_json`.
+TD = spans matching `td_span_predicate()` older than the live edge, frozen into
+`td_purge_backup.td_span_ids__<stamp>`; deletes act on those traces (TD-only random ids, so the
+attribute-less second span of a live TD request goes too). A ledger (`td_purge_backup.__purges`)
+records started/verified/completed per stamp; a purge refuses to start while an earlier one never
+reached `verified`, and prints that stamp's restore SQL instead. Other tables are never written.
 """
 from __future__ import annotations
 
@@ -31,6 +35,8 @@ from .spans import td_span_predicate
 DB = "platformdb"
 SPANS_TABLE = f"{DB}.otel_traces_json"
 BACKUP_DB = "td_purge_backup"
+LEDGER = f"{BACKUP_DB}.__purges"
+TRACE_INDEX = "trace_time_index"                       # TraceId -> min/max time, fed by otel_traces_json
 ROLLUP_RE = re.compile(r"^(agw_\w+_5m|agentgateway_\w+_minute_state)$")
 ROW_TABLE_RE = re.compile(r"^agw_\w+$")
 TD_SOURCES = ("otel_traces_json", "agw_spans_typed")    # tables TD spans land in (directly or via MV)
@@ -44,6 +50,10 @@ class ClickHouseError(RuntimeError):
 
 
 class PurgeVerificationError(ClickHouseError):
+    pass
+
+
+class PurgeIncompleteError(ClickHouseError):
     pass
 
 
@@ -256,13 +266,57 @@ class ClickHouse:
         return (f"{col} >= toDateTime64({_q(_sql_ts(lo))}, 9, 'UTC') "
                 f"AND {col} < toDateTime64({_q(_sql_ts(hi))}, 9, 'UTC')")
 
+    # ------------------------------------------------------------ purge ledger
+    def _ledger_init(self) -> None:
+        self.query(f"CREATE DATABASE IF NOT EXISTS {BACKUP_DB}")
+        self.query(f"CREATE TABLE IF NOT EXISTS {LEDGER} (stamp String, status String, start String, upper String, "
+                   f"rollups String, trace_index UInt8, at DateTime DEFAULT now()) "
+                   f"ENGINE = MergeTree ORDER BY (stamp, at)")
+
+    def _ledger(self, stamp: str, status: str, start: str, upper: str, rollups: str, trace_index: bool) -> None:
+        self.query(f"INSERT INTO {LEDGER} (stamp, status, start, upper, rollups, trace_index) VALUES "
+                   f"({_q(stamp)}, {_q(status)}, {_q(start)}, {_q(upper)}, {_q(rollups)}, {int(trace_index)})")
+
+    def incomplete_purges(self) -> list[dict]:
+        """Purges that started (and may have changed rollups) but never reached `verified`."""
+        return self.json_rows(
+            f"SELECT stamp, any(start) AS start, any(upper) AS upper, any(rollups) AS rollups, "
+            f"max(trace_index) AS trace_index FROM {LEDGER} GROUP BY stamp "
+            f"HAVING countIf(status = 'started') > 0 AND countIf(status = 'verified') = 0 ORDER BY stamp")
+
+    @staticmethod
+    def restore_sql(stamp: str, start: str, upper: str, rollups: str, trace_index) -> list[str]:
+        """SQL that puts every table a purge touched back to its pre-purge snapshot `stamp`."""
+        out = []
+        for spec in filter(None, rollups.split(",")):
+            t, b = spec.split(":")
+            out.append(f"ALTER TABLE {DB}.{t} DELETE WHERE {b} >= toDateTime({_q(start)}, 'UTC') "
+                       f"AND {b} < toDateTime({_q(upper)}, 'UTC') SETTINGS mutations_sync=2; "
+                       f"INSERT INTO {DB}.{t} SELECT * FROM {BACKUP_DB}.{t}__{stamp};")
+        if int(trace_index or 0):
+            out.append(f"INSERT INTO {DB}.{TRACE_INDEX} SELECT * FROM {BACKUP_DB}.{TRACE_INDEX}__{stamp};"
+                       f"  -- min/max states: re-adding rows that still exist is harmless")
+        return out
+
     # ------------------------------------------------------------ purge
     def purge_td(self, now: datetime | None = None, log: Callable[[str], None] = print,
-                 sleep: Callable[[float], None] = time.sleep) -> dict:
+                 sleep: Callable[[float], None] = time.sleep, force_new_backup: bool = False) -> dict:
         n, lo_s, hi_s = self.td_window()
         if n == 0:
             log("purge: no TD spans in ClickHouse; nothing to do")
             return {"td_rows": 0}
+        self._ledger_init()
+        stale = self.incomplete_purges()
+        if stale and not force_new_backup:
+            lines = []
+            for r in stale:
+                lines.append(f"purge {r['stamp']} (rollup range [{r['start']}, {r['upper']})) did not finish; "
+                             f"its backup holds the pre-purge rollups. Restore with:")
+                lines += ["  " + q for q in self.restore_sql(r["stamp"], r["start"], r["upper"], r["rollups"],
+                                                             r["trace_index"])]
+            raise PurgeIncompleteError(
+                "\n".join(lines) + "\nThen re-run. --force-new-backup starts a new purge anyway "
+                "(its snapshot would be taken from the current, possibly damaged, rollups).")
         lo, hi = _dt(lo_s), _dt(hi_s)
         now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         upper = _floor(now - LAG, 5)
@@ -278,68 +332,93 @@ class ClickHouse:
         log(f"purge: {n} TD spans {lo_s[:19]} .. {hi_s[:19]} UTC; rollup range [{_sql_ts(start)}, {_sql_ts(upper)})")
 
         rollups, row_tables = self.views()
+        has_index = bool(self.json_rows(f"SELECT name FROM system.tables WHERE database = '{DB}' "
+                                        f"AND name = '{TRACE_INDEX}'"))
+        spec = ",".join(f"{ru.target}:{ru.bucket}" for ru in rollups)
+        restore = self.restore_sql(stamp, _sql_ts(start), _sql_ts(upper), spec, has_index)
 
-        # 1. TD span ids (our own table) + rollup snapshots, before any mutation.
-        self.query(f"CREATE DATABASE IF NOT EXISTS {BACKUP_DB}")
+        # 1. Freeze the TD span ids (spans older than the live edge only), then snapshot, before any mutation.
         ids = f"{BACKUP_DB}.td_span_ids__{stamp}"
         self.query(f"CREATE TABLE IF NOT EXISTS {ids} (TraceId String, SpanId String) "
                    f"ENGINE = MergeTree ORDER BY (TraceId, SpanId)")
-        self.query(f"INSERT INTO {ids} SELECT TraceId, SpanId FROM {SPANS_TABLE} WHERE {pred}")
-        td_ids = f"(TraceId, SpanId) IN (SELECT TraceId, SpanId FROM {ids})"
-        td_filter = {"otel_traces_json": pred, "agw_spans_typed": td_ids}
+        self.query(f"INSERT INTO {ids} SELECT TraceId, SpanId FROM {SPANS_TABLE} WHERE {pred} "
+                   f"AND Timestamp < toDateTime64({_q(_sql_ts(upper))}, 9, 'UTC')")
+        # Trace level, over every TD id ever frozen (this and earlier purges; TD-only random trace ids):
+        # also removes the attribute-less second span of each live TD request. Row deletes stay inside
+        # [start, upper), the range whose rollups are recomputed.
+        all_ids = f"TraceId IN (SELECT TraceId FROM merge('{BACKUP_DB}', '^td_span_ids__'))"
+        td_traces = all_ids
+        in_range = self._time_range("Timestamp", start, upper)
+        td_filter = {"otel_traces_json": td_traces, "agw_spans_typed": td_traces}
         brange = (f"{{b}} >= toDateTime({_q(_sql_ts(start))}, 'UTC') "
                   f"AND {{b}} < toDateTime({_q(_sql_ts(upper))}, 'UTC')")
-        backups = []
         for ru in rollups:
             bk = f"{BACKUP_DB}.{ru.target}__{stamp}"
             self.query(f"CREATE TABLE IF NOT EXISTS {bk} AS {DB}.{ru.target}")
             self.query(f"INSERT INTO {bk} SELECT * FROM {DB}.{ru.target} WHERE {brange.format(b=ru.bucket)}")
-            backups.append((ru, bk))
-        log(f"purge: snapshot of {len(backups)} rollup tables in {BACKUP_DB}.*__{stamp}")
+        # trace_time_index: every TD trace id ever frozen, so orphans of earlier purges go too.
+        if has_index:
+            bk = f"{BACKUP_DB}.{TRACE_INDEX}__{stamp}"
+            self.query(f"CREATE TABLE IF NOT EXISTS {bk} AS {DB}.{TRACE_INDEX}")
+            self.query(f"INSERT INTO {bk} SELECT * FROM {DB}.{TRACE_INDEX} WHERE {all_ids}")
+        self._ledger(stamp, "started", _sql_ts(start), _sql_ts(upper), spec, has_index)
+        log(f"purge: snapshot of {len(rollups)} rollup tables{' + ' + TRACE_INDEX if has_index else ''} "
+            f"in {BACKUP_DB}.*__{stamp}")
 
-        # 2. Real totals before (rollup - TD contribution).
-        before = {ru.target: self.real_totals(ru, start, upper, td_filter) for ru in rollups}
+        def restore_hint() -> None:
+            log(f"purge: FAILED after the snapshot. Rollups may be partly recomputed. Restore from {stamp} with:")
+            for q in restore:
+                log("  " + q)
 
-        # 3. Row-level span tables: TD rows only.
-        for t in row_tables:
-            self.query(f"ALTER TABLE {DB}.{t} DELETE WHERE Timestamp >= toDateTime64({_q(_sql_ts(start))}, 9, 'UTC') "
-                       f"AND {td_ids}", settings=SYNC)
-        log(f"purge: TD rows deleted from {', '.join(row_tables) or '(none)'}")
+        try:
+            # 2. Real totals before (rollup - TD contribution).
+            before = {ru.target: self.real_totals(ru, start, upper, td_filter) for ru in rollups}
 
-        # 4. Rollups: drop the range, re-insert from the cleaned source via the view's own select.
-        for ru in rollups:
-            self.query(f"ALTER TABLE {DB}.{ru.target} DELETE WHERE {brange.format(b=ru.bucket)}", settings=SYNC)
-            where = f"{self._time_range(ru.src_time, start, upper)} AND NOT {td_filter[ru.source]}"
-            cols = ", ".join(f"`{c}`" for c, _ in ru.columns)
-            self.query(f"INSERT INTO {DB}.{ru.target} ({cols}) SELECT {cols} FROM ({self._view_over(ru, where)})")
-        log(f"purge: recomputed {', '.join(ru.target for ru in rollups) or '(none)'}")
+            # 3. Row-level span tables: TD traces only.
+            for t in row_tables:
+                self.query(f"ALTER TABLE {DB}.{t} DELETE WHERE {in_range} AND {td_traces}", settings=SYNC)
+            log(f"purge: TD rows deleted from {', '.join(row_tables) or '(none)'}")
 
-        # 5. Verify real totals are unchanged.
-        diffs = []
-        for ru in rollups:
-            after = self.real_totals(ru, start, upper, None)
-            if after != before[ru.target]:
-                keys = set(after) ^ set(before[ru.target]) | {k for k in after if after.get(k) != before[ru.target].get(k)}
-                diffs.append(f"{ru.target}: {len(keys)} keys differ, e.g. "
-                             + "; ".join(f"{k}: before={before[ru.target].get(k)} after={after.get(k)}"
-                                         for k in sorted(keys)[:3]))
-        restore = [f"ALTER TABLE {DB}.{ru.target} DELETE WHERE {brange.format(b=ru.bucket)} SETTINGS mutations_sync=2; "
-                   f"INSERT INTO {DB}.{ru.target} SELECT * FROM {bk};" for ru, bk in backups]
-        if diffs:
-            raise PurgeVerificationError(
-                "real totals changed; TD source rows were NOT deleted. Restore the rollups with:\n  "
-                + "\n  ".join(restore) + "\nDifferences:\n  " + "\n  ".join(diffs))
+            # 4. Rollups: drop the range, re-insert from the cleaned source via the view's own select.
+            for ru in rollups:
+                self.query(f"ALTER TABLE {DB}.{ru.target} DELETE WHERE {brange.format(b=ru.bucket)}", settings=SYNC)
+                where = f"{self._time_range(ru.src_time, start, upper)} AND NOT {td_filter[ru.source]}"
+                cols = ", ".join(f"`{c}`" for c, _ in ru.columns)
+                self.query(f"INSERT INTO {DB}.{ru.target} ({cols}) SELECT {cols} FROM ({self._view_over(ru, where)})")
+            log(f"purge: recomputed {', '.join(ru.target for ru in rollups) or '(none)'}")
+
+            # 5. Verify real totals are unchanged.
+            diffs = []
+            for ru in rollups:
+                after = self.real_totals(ru, start, upper, None)
+                if after != before[ru.target]:
+                    keys = (set(after) ^ set(before[ru.target])
+                            | {k for k in after if after.get(k) != before[ru.target].get(k)})
+                    diffs.append(f"{ru.target}: {len(keys)} keys differ, e.g. "
+                                 + "; ".join(f"{k}: before={before[ru.target].get(k)} after={after.get(k)}"
+                                             for k in sorted(keys)[:3]))
+            if diffs:
+                raise PurgeVerificationError("real totals changed; TD source rows were NOT deleted.\nDifferences:\n  "
+                                             + "\n  ".join(diffs))
+        except BaseException:
+            restore_hint()
+            raise
+        self._ledger(stamp, "verified", _sql_ts(start), _sql_ts(upper), spec, has_index)
         log(f"purge: verified real totals identical in {len(rollups)} rollup tables "
             f"({sum(len(v) for v in before.values())} real keys compared)")
 
-        # 6. TD source rows (predicate only).
-        self.query(f"ALTER TABLE {SPANS_TABLE} DELETE WHERE Timestamp >= toDateTime64({_q(_sql_ts(start))}, 9, 'UTC') "
-                   f"AND {pred} AND {td_ids}", settings=SYNC)
+        # 6. trace_time_index (TD trace ids only) and the TD source rows.
+        if has_index:
+            self.query(f"ALTER TABLE {DB}.{TRACE_INDEX} DELETE WHERE {all_ids}", settings=SYNC)
+            log(f"purge: TD trace ids deleted from {TRACE_INDEX}")
+        self.query(f"ALTER TABLE {SPANS_TABLE} DELETE WHERE {in_range} AND {td_traces}", settings=SYNC)
+        self._ledger(stamp, "completed", _sql_ts(start), _sql_ts(upper), spec, has_index)
         left = self.count_td()
-        log(f"purge: TD source rows deleted from {SPANS_TABLE}; {left} TD spans remain")
-        log(f"purge: backup kept in {BACKUP_DB} (tables *__{stamp}). To restore the rollups:")
-        for s in restore:
-            log("  " + s)
+        log(f"purge: TD traces deleted from {SPANS_TABLE}; {left} TD spans remain"
+            + (" (newer than the live edge; purge again later)" if left else ""))
+        log(f"purge: backup kept in {BACKUP_DB} (tables *__{stamp}). To restore:")
+        for q in restore:
+            log("  " + q)
         log(f"purge: to drop every backup: DROP DATABASE {BACKUP_DB}")
         return {"td_rows": n, "start": _sql_ts(start), "upper": _sql_ts(upper), "stamp": stamp,
                 "rollups": [ru.target for ru in rollups], "row_tables": row_tables,

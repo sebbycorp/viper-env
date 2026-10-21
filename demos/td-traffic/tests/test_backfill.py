@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from tdlib.clickhouse import ClickHouse
+from tdlib.clickhouse import ClickHouse, ClickHouseError, PurgeIncompleteError
 from tdlib.spans import td_span_predicate
 
 TD_PY = Path(__file__).resolve().parents[1] / "td.py"
@@ -127,12 +127,18 @@ COLUMNS = {
 
 
 class FakeHTTPCH(ClickHouse):
-    def __init__(self):
+    def __init__(self, stale=(), fail_on=None):
         super().__init__("http://x", "u", "p")
         self.sql: list[str] = []
+        self.stale = list(stale)          # rows the ledger reports as incomplete purges
+        self.fail_on = fail_on            # SQL prefix that raises, to simulate a mid-purge failure
 
     def query(self, sql, data=None, settings=None):
         self.sql.append(sql)
+        if self.fail_on and sql.startswith(self.fail_on):
+            raise ClickHouseError("simulated failure")
+        if "FROM system.tables" in sql and "name = 'trace_time_index'" in sql:
+            return json.dumps({"name": "trace_time_index"})
         if "FROM system.tables" in sql:
             return "\n".join(json.dumps(r) for r in MV_ROWS)
         if "FROM system.columns" in sql:
@@ -140,31 +146,88 @@ class FakeHTTPCH(ClickHouse):
             return "\n".join(json.dumps({"name": n, "type": t}) for n, t in COLUMNS.get(table, []))
         if "AS n, toString(min(Timestamp))" in sql:
             return json.dumps({"n": "3", "lo": "2026-10-01 10:17:00.000000000", "hi": "2026-10-02 10:00:00.000000000"})
+        if "FROM td_purge_backup.__purges" in sql:
+            return "\n".join(json.dumps(r) for r in self.stale)
         return ""
+
+
+NOW = datetime(2026, 10, 21, 15, 0, tzinfo=timezone.utc)
+STAMP = "20261021T150000"
 
 
 def test_purge_backs_up_before_any_delete():
     ch = FakeHTTPCH()
-    ch.purge_td(now=datetime(2026, 10, 21, 15, 0, tzinfo=timezone.utc), log=lambda m: None)
+    ch.purge_td(now=NOW, log=lambda m: None)
     s = ch.sql
     deletes = [i for i, q in enumerate(s) if q.startswith("ALTER TABLE") and " DELETE " in q]
     creates = [i for i, q in enumerate(s) if q.startswith("CREATE TABLE IF NOT EXISTS td_purge_backup.agw_cost_model_5m")]
     copies = [i for i, q in enumerate(s) if q.startswith("INSERT INTO td_purge_backup.agw_cost_model_5m")]
-    assert deletes and creates and copies
-    assert max(creates + copies) < min(deletes)
+    tix_bk = [i for i, q in enumerate(s) if q.startswith("INSERT INTO td_purge_backup.trace_time_index__")]
+    assert deletes and creates and copies and tix_bk
+    assert max(creates + copies + tix_bk) < min(deletes)
     assert " AS platformdb.agw_cost_model_5m" in s[creates[0]]
-    # source rows: deleted with the TD predicate only
+    # TD ids are frozen with the predicate, older than the live edge only
+    (freeze,) = [q for q in s if q.startswith(f"INSERT INTO td_purge_backup.td_span_ids__{STAMP}")]
+    assert td_span_predicate() in freeze and "Timestamp < toDateTime64('2026-10-21 14:55:00'" in freeze
+    # source rows: whole TD traces from the frozen ids (covers the attribute-less second span)
     src = [q for q in s if q.startswith("ALTER TABLE platformdb.otel_traces_json DELETE")]
-    assert len(src) == 1 and td_span_predicate() in src[0]
+    assert len(src) == 1 and "TraceId IN (SELECT TraceId FROM merge('td_purge_backup', '^td_span_ids__'))" in src[0]
+    assert "Timestamp < toDateTime64('2026-10-21 14:55:00'" in src[0]
     # rollup: range delete from the hour of the first TD span, then re-insert from the view's select
     roll = [q for q in s if q.startswith("ALTER TABLE platformdb.agw_cost_model_5m DELETE")]
     assert len(roll) == 1 and "2026-10-01 10:00:00" in roll[0]
     reins = [i for i, q in enumerate(s) if q.startswith("INSERT INTO platformdb.agw_cost_model_5m")]
     assert len(reins) == 1 and "FROM (SELECT * FROM platformdb.agw_spans_typed WHERE" in s[reins[0]]
     assert s.index(roll[0]) < reins[0]
-    # tables outside agw*/agentgateway_* are left alone
-    assert not any("trace_time_index" in q for q in s if q.startswith(("ALTER", "INSERT")))
+    # trace_time_index: TD trace ids only, after verification (= after the rollup re-insert), before the source
+    (tix,) = [i for i, q in enumerate(s) if q.startswith("ALTER TABLE platformdb.trace_time_index DELETE")]
+    assert "merge('td_purge_backup', '^td_span_ids__')" in s[tix]
+    assert reins[0] < tix < s.index(src[0])
+    # ledger: started before the first delete, verified before the trace index / source deletes
+    led = {st: i for i, q in enumerate(s) if q.startswith("INSERT INTO td_purge_backup.__purges")
+           for st in ("started", "verified", "completed") if f"'{st}'" in q}
+    assert led["started"] < min(deletes) and reins[0] < led["verified"] < tix < led["completed"]
     assert not any(q.startswith(("DROP", "TRUNCATE")) for q in s)
+
+
+def test_purge_failure_mid_rollup_prints_restore_sql():
+    ch = FakeHTTPCH(fail_on="INSERT INTO platformdb.agw_cost_model_5m")
+    logs = []
+    with pytest.raises(ClickHouseError):
+        ch.purge_td(now=NOW, log=logs.append)
+    text = "\n".join(logs)
+    assert f"Restore from {STAMP}" in text
+    assert f"INSERT INTO platformdb.agw_cost_model_5m SELECT * FROM td_purge_backup.agw_cost_model_5m__{STAMP};" in text
+    assert f"INSERT INTO platformdb.trace_time_index SELECT * FROM td_purge_backup.trace_time_index__{STAMP};" in text
+    assert not any(q.startswith("ALTER TABLE platformdb.otel_traces_json") for q in ch.sql)
+    assert not any(q.startswith("INSERT INTO td_purge_backup.__purges") and "'verified'" in q for q in ch.sql)
+
+
+def test_incomplete_prior_purge_blocks_new_one():
+    old = {"stamp": "20261020T090000", "start": "2026-09-20 09:00:00", "upper": "2026-10-20 08:55:00",
+           "rollups": "agw_cost_model_5m:bucket", "trace_index": "1"}
+    ch = FakeHTTPCH(stale=[old])
+    with pytest.raises(PurgeIncompleteError) as e:
+        ch.purge_td(now=NOW, log=lambda m: None)
+    msg = str(e.value)
+    assert "20261020T090000" in msg and "--force-new-backup" in msg
+    assert "INSERT INTO platformdb.agw_cost_model_5m SELECT * FROM td_purge_backup.agw_cost_model_5m__20261020T090000" in msg
+    assert "bucket >= toDateTime('2026-09-20 09:00:00', 'UTC')" in msg
+    assert not any(q.startswith(("ALTER", "INSERT INTO platformdb", "INSERT INTO td_purge_backup.td_span_ids"))
+                   for q in ch.sql)
+    # the override proceeds
+    ch2 = FakeHTTPCH(stale=[old])
+    ch2.purge_td(now=NOW, log=lambda m: None, force_new_backup=True)
+    assert any(q.startswith("ALTER TABLE platformdb.otel_traces_json DELETE") for q in ch2.sql)
+
+
+def test_main_reports_clickhouse_errors_cleanly(td, capsys):
+    def boom():
+        raise OSError("connection reset by peer")
+    td.fake.count_td = boom
+    rc = td.main(["backfill", "--context", "CTX", "--days", "1"])
+    out = capsys.readouterr()
+    assert rc == 1 and "error: connection reset by peer" in out.out and "Traceback" not in out.err
 
 
 def test_purge_noop_when_no_td_rows():
