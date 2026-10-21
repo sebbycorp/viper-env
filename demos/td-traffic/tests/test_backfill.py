@@ -244,3 +244,52 @@ def test_insert_rows_batches(monkeypatch):
     monkeypatch.setattr(ch, "_insert_batch", lambda table, lines: sent.append(len(lines)))
     n = ch.insert_rows("platformdb.otel_traces_json", ({"i": i} for i in range(45)), batch=20)
     assert n == 45 and sent == [20, 20, 5]
+
+
+class MismatchCH(FakeHTTPCH):
+    """The pre-verify summary (view over NOT-TD source rows) disagrees with the real totals."""
+
+    def query(self, sql, data=None, settings=None):
+        if sql.startswith("SELECT toString(") and "AND NOT TraceId IN" in sql:
+            self.sql.append(sql)
+            return json.dumps({"k0": "svc", "v0": "5", "v1": "1.5"})
+        return super().query(sql, data, settings)
+
+
+def test_purge_pre_verify_mismatch_aborts_before_any_mutation(tmp_path):
+    from tdlib.clickhouse import PurgeVerificationError
+    ch = MismatchCH()
+    ch.restore_dir = str(tmp_path)
+    with pytest.raises(PurgeVerificationError, match="aborted before any change"):
+        ch.purge_td(now=NOW, log=lambda m: None)
+    assert not any(q.startswith("ALTER TABLE") for q in ch.sql)
+    assert not any(q.startswith("INSERT INTO platformdb.") for q in ch.sql)
+    led = [q for q in ch.sql if q.startswith("INSERT INTO td_purge_backup.__purges")]
+    assert "'started'" in led[0] and "'aborted'" in led[-1]
+
+
+def test_views_refuses_mv_reading_a_rollup():
+    import tdlib.clickhouse as chm
+    ch = FakeHTTPCH()
+    chained = {"name": "agw_cost_model_1h_mv",
+               "create_table_query": "CREATE MATERIALIZED VIEW platformdb.agw_cost_model_1h_mv TO platformdb.x_1h AS ..",
+               "as_select": "SELECT bucket FROM platformdb.agw_cost_model_5m"}
+    orig = list(MV_ROWS)
+    MV_ROWS.append(chained)
+    try:
+        with pytest.raises(chm.ClickHouseError, match="reads rollup table agw_cost_model_5m"):
+            ch.views()
+    finally:
+        MV_ROWS[:] = orig
+
+
+def test_restore_command_is_runnable(tmp_path):
+    ch = FakeHTTPCH(fail_on="INSERT INTO platformdb.agw_cost_model_5m")
+    ch.restore_dir = str(tmp_path)
+    ch.restore_cmd_prefix = "kubectl --context C -n ns exec -i pod -- clickhouse-client --multiquery"
+    logs = []
+    with pytest.raises(ClickHouseError):
+        ch.purge_td(now=NOW, log=logs.append)
+    f = tmp_path / f"td-restore-{STAMP}.sql"
+    assert f.exists() and "INSERT INTO platformdb.agw_cost_model_5m SELECT * FROM" in f.read_text()
+    assert any(f'clickhouse-client --multiquery < "{f}"' in m for m in logs)

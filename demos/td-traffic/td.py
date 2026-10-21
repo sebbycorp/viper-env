@@ -22,7 +22,7 @@ from typing import Iterator
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from tdlib import budget_sync, live  # noqa: E402
+from tdlib import budget_sync, kube as kube_mod, live, manifests  # noqa: E402
 from tdlib.clickhouse import SPANS_TABLE, ClickHouse, ClickHouseError  # noqa: E402
 from tdlib.kube import Kube, KubeError  # noqa: E402
 from tdlib.manifests import (  # noqa: E402
@@ -53,7 +53,77 @@ TD_KINDS = [
     "agentgatewaybackends.agentgateway.dev",
 ]
 STATUS_KINDS = [*TD_KINDS, "secrets", "configmaps", "deployments.apps", "services"]
-CH_POD, CH_SECRET = "pod/management-clickhouse-shard0-0", "management-clickhouse-auth"
+EARLY_WINDOW = timedelta(days=5)
+UI_SVC = "solo-enterprise-ui"
+
+
+def configure(release: str, namespace: str, gateway: str) -> None:
+    """Point every module at this cluster's agentgateway release / namespace / Gateway (flags, with defaults)."""
+    global RELEASE, RELEASE_NS
+    RELEASE, RELEASE_NS = release, namespace
+    manifests.GATEWAY = {"name": gateway, "namespace": namespace}
+    live.GATEWAY_TARGET, live.GATEWAY_NS = f"svc/{gateway}", namespace
+    budget_sync.UI_TARGET, budget_sync.UI_NS = f"svc/{UI_SVC}", namespace
+    kube_mod.HELM_RELEASE = (release, namespace)
+    kube_mod.COMPONENTS = kube_mod.components(gateway, namespace)
+
+
+def early_window_warning(now: datetime | None = None) -> str | None:
+    start, end = budget_window(now)
+    age = (now or datetime.now(timezone.utc)) - start
+    if age < EARLY_WINDOW:
+        return (f"WARNING: the gateway budget window started {start:%Y-%m-%d %H:%M} UTC, only "
+                f"{age.total_seconds() / 86400:.1f} days ago, so window-to-date spend and the budget limits will "
+                f"look small. Wait, or re-run `replan-budgets` + `sync-budgets` in a few days.")
+    return None
+
+
+def warn_early_window() -> None:
+    w = early_window_warning()
+    if w:
+        log(w)
+
+
+def discover_clickhouse(kube: Kube, ns: str | None = None) -> tuple[str, str, str]:
+    """(namespace, pod, auth secret) of the management ClickHouse: name pattern *clickhouse* in the UI namespace."""
+    ns = ns or RELEASE_NS
+    pods = json.loads(kube.run(["get", "pods", "-n", ns, "-o", "json"]))["items"]
+    cands = sorted((p["metadata"]["name"] for p in pods
+                    if "clickhouse" in p["metadata"]["name"] and p.get("status", {}).get("phase") == "Running"
+                    and "operator" not in p["metadata"]["name"]),
+                   key=lambda n: ("shard0" not in n, n))
+    if not cands:
+        raise KubeError(f"no running *clickhouse* pod in namespace {ns}: install the Solo Enterprise management "
+                        f"chart (Solo UI with its ClickHouse) or pass --namespace")
+    secs = json.loads(kube.run(["get", "secrets", "-n", ns, "-o", "json"]))["items"]
+    auth = sorted(s["metadata"]["name"] for s in secs if "clickhouse" in s["metadata"]["name"]
+                  and {"username", "password"} <= set((s.get("data") or {})))
+    if not auth:
+        raise KubeError(f"no *clickhouse* Secret with username/password keys in namespace {ns}")
+    return ns, cands[0], auth[0]
+
+
+def ui_url(kube: Kube) -> str:
+    """How to open the Solo UI: LoadBalancer / NodePort address of svc solo-enterprise-ui, else a port-forward."""
+    pf = f"kubectl --context {kube.context} -n {RELEASE_NS} port-forward svc/{UI_SVC} 8090:80  # then http://localhost:8090"
+    p = kube.kubectl(["get", "svc", UI_SVC, "-n", RELEASE_NS, "-o", "json"], check=False)
+    if p.returncode != 0:
+        return pf
+    svc = json.loads(p.stdout)
+    ports = svc["spec"].get("ports", [])
+    if svc["spec"].get("type") == "LoadBalancer":
+        ing = (svc.get("status", {}).get("loadBalancer", {}).get("ingress") or [{}])[0]
+        host = ing.get("ip") or ing.get("hostname")
+        if host and ports:
+            return f"http://{host}:{ports[0]['port']}"
+    if svc["spec"].get("type") in ("NodePort", "LoadBalancer") and ports and ports[0].get("nodePort"):
+        nodes = json.loads(kube.run(["get", "nodes", "-o", "json"], check=False) or '{"items": []}')["items"]
+        for n in nodes:
+            addrs = {a["type"]: a["address"] for a in n.get("status", {}).get("addresses", [])}
+            ip = addrs.get("ExternalIP") or addrs.get("InternalIP")
+            if ip:
+                return f"http://{ip}:{ports[0]['nodePort']}  (or: {pf})"
+    return pf
 
 
 def log(msg: str) -> None:
@@ -66,8 +136,14 @@ def saved_values(kube: Kube) -> dict | None:
     """The saved original `budgetDimensions` subset ({} = key was absent), or None if never saved."""
     p = kube.kubectl(["get", "configmap", SAVED_CM, "-n", NAMESPACE, "-o", "json"], check=False)
     if p.returncode != 0:
-        return None
+        if any(s in (p.stderr or "") for s in ("NotFound", "not found")):
+            return None
+        raise KubeError(f"reading {NAMESPACE}/{SAVED_CM} failed: {(p.stderr or p.stdout).strip()}")
     return json.loads(json.loads(p.stdout)["data"][SAVED_KEY])
+
+
+def looks_like_td_dims(dims) -> bool:
+    return bool(dims) and "organization" in json.dumps(dims) and "Client Tool" in json.dumps(dims)
 
 
 def save_values_once(kube: Kube) -> None:
@@ -76,7 +152,7 @@ def save_values_once(kube: Kube) -> None:
         return
     current = kube.helm_get_values(RELEASE, RELEASE_NS)
     dims = current.get(DIM_KEY)
-    if dims and "organization" in json.dumps(dims) and "Client Tool" in json.dumps(dims):
+    if looks_like_td_dims(dims):
         raise KubeError(f"{RELEASE} budgetDimensions already look like the TD values but no saved original "
                         f"exists in {NAMESPACE}/{SAVED_CM}; refusing to save them as the original")
     subset = {DIM_KEY: dims} if DIM_KEY in current else {}
@@ -118,6 +194,10 @@ def restore_values(kube: Kube, saved: dict) -> None:
 
 def cmd_up(kube: Kube, args) -> int:
     missing = kube.preflight()
+    try:
+        discover_clickhouse(kube)
+    except KubeError as e:
+        missing.append(str(e))
     if missing:
         log("missing on context " + kube.context + ": " + ", ".join(missing))
         log("nothing changed")
@@ -133,6 +213,7 @@ def cmd_up(kube: Kube, args) -> int:
     kube.helm_upgrade_reuse(RELEASE, CHART, version, RELEASE_NS, DIMENSIONS_FILE)
     log(f"helm upgrade {RELEASE} {version} with {DIMENSIONS_FILE.name} (proxy picks it up in ~60s)")
     kube.run(["rollout", "status", f"deployment/{MOCK}", "-n", NAMESPACE, "--timeout=180s"])
+    warn_early_window()
     log("up: done")
     return 0
 
@@ -154,12 +235,27 @@ def cmd_replan_budgets(kube: Kube, args) -> int:
     for b in budgets:
         log(f"  {b['name']:45} {b['limit']['amount']:>8,} USD")
     log(f"replan-budgets: applied {len(budgets)} budgets; run `sync-budgets` so the page reflects the counters")
+    warn_early_window()
     return 0
 
 
 def cmd_down(kube: Kube, args) -> int:
     saved = saved_values(kube)
     if saved is None:
+        try:
+            dims = kube.helm_get_values(RELEASE, RELEASE_NS).get(DIM_KEY)
+        except KubeError as e:
+            if "not found" not in str(e):
+                raise
+            dims = None                        # no release, so no TD dimensions to leave behind
+        if looks_like_td_dims(dims):
+            log(f"error: {RELEASE} still carries the TD {DIM_KEY} but {NAMESPACE}/{SAVED_CM} (the saved original) "
+                f"is gone; nothing deleted. Restore by hand, then re-run `down`:")
+            log(f"  helm --kube-context {kube.context} -n {RELEASE_NS} get values {RELEASE} -o json "
+                f"| jq 'del(.{DIM_KEY})' > values.json")
+            log(f"  helm --kube-context {kube.context} upgrade {RELEASE} {CHART} -n {RELEASE_NS} "
+                f"--version <installed chart version> --reset-values -f values.json")
+            return 1
         log(f"no {NAMESPACE}/{SAVED_CM}; Helm release left untouched")
     else:
         restore_values(kube, saved)
@@ -180,10 +276,17 @@ def cmd_down(kube: Kube, args) -> int:
 @contextlib.contextmanager
 def open_clickhouse(kube: Kube) -> Iterator[ClickHouse]:
     """ClickHouse over a port-forward to the management ClickHouse pod, credentials from its Secret."""
-    sec = json.loads(kube.run(["get", "secret", CH_SECRET, "-n", RELEASE_NS, "-o", "json"]))["data"]
+    ns, pod, secret = discover_clickhouse(kube)
+    sec = json.loads(kube.run(["get", "secret", secret, "-n", ns, "-o", "json"]))["data"]
     user, pw = (base64.b64decode(sec[k]).decode() for k in ("username", "password"))
-    with kube.port_forward(CH_POD, RELEASE_NS, 8123) as port:
-        yield ClickHouse(f"http://127.0.0.1:{port}", user, pw)
+    with kube.port_forward(f"pod/{pod}", ns, 8123) as port:
+        ch = ClickHouse(f"http://127.0.0.1:{port}", user, pw)
+        ch.restore_dir = str(Path.cwd())
+        ch.restore_cmd_prefix = (
+            f"kubectl --context {kube.context} -n {ns} exec -i {pod} -- clickhouse-client --user {user} "
+            f"--password \"$(kubectl --context {kube.context} -n {ns} get secret {secret} "
+            f"-o jsonpath='{{.data.password}}' | base64 -d)\" --multiquery")
+        yield ch
 
 
 def td_span_count(kube: Kube) -> int:
@@ -238,6 +341,7 @@ def cmd_status(kube: Kube, args) -> int:
     log(f"budget window (gateway `Month`, epoch-aligned 30 days): {start:%Y-%m-%d %H:%M} .. {end:%Y-%m-%d %H:%M} UTC; "
         f"next rollover {end:%Y-%m-%d %H:%M} UTC -> then re-run `up` (or `replan-budgets`), `backfill --replace`, "
         f"`sync-budgets`")
+    warn_early_window()
     try:
         log(f"TD span rows in ClickHouse: {td_span_count(kube)}")
     except (KubeError, ClickHouseError, OSError, ValueError) as e:
@@ -260,10 +364,30 @@ def cmd_sync_budgets(kube: Kube, args) -> int:
     return 0
 
 
+def cmd_demo(kube: Kube, args) -> int:
+    """preflight -> up -> backfill --replace -> sync-budgets, then where to look and what to run next."""
+    rc = cmd_up(kube, args)
+    if rc:
+        return rc
+    with open_clickhouse(kube) as ch:
+        rc = run_backfill(ch, args.days, True, seed=args.seed, force_new_backup=False)
+    if rc:
+        return rc
+    rc = cmd_sync_budgets(kube, argparse.Namespace(seed=args.seed, dry_run=False))
+    if rc:
+        return rc
+    log("demo: ready.")
+    log(f"  Solo UI:   {ui_url(kube)}")
+    log(f"  next:      uv run td.py live --context {kube.context}   (Ctrl-C stops)")
+    log(f"  cleanup:   uv run td.py down --purge-history --context {kube.context}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="td.py", description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name, fn, hlp in [
+        ("demo", cmd_demo, "one shot: preflight, up, backfill --replace, sync-budgets; prints the UI URL"),
         ("up", cmd_up, "create the TD demo objects, keys, budgets and dimensions"),
         ("down", cmd_down, "restore Helm budgetDimensions and delete every TD object"),
         ("status", cmd_status, "count TD objects and TD span rows"),
@@ -275,8 +399,15 @@ def main(argv: list[str] | None = None) -> int:
     ]:
         p = sub.add_parser(name, help=hlp)
         p.add_argument("--context", required=True, help="kube context (required; the current one is never used)")
+        p.add_argument("--namespace", default=RELEASE_NS,
+                       help=f"namespace of the agentgateway release, Gateway, Solo UI and ClickHouse (default {RELEASE_NS})")
+        p.add_argument("--release", default=RELEASE, help=f"agentgateway Helm release name (default {RELEASE})")
+        p.add_argument("--gateway", default="agentgateway-proxy",
+                       help="Gateway (and its proxy Service) carrying the TD routes (default agentgateway-proxy)")
         p.set_defaults(fn=fn)
-        if name in ("up", "replan-budgets"):
+        if name == "demo":
+            p.add_argument("--days", type=float, default=BACKFILL_DAYS, help=f"history length (default {BACKFILL_DAYS})")
+        if name in ("up", "replan-budgets", "demo"):
             p.add_argument("--seed", type=int, default=SEED, help="budget planning seed (same as backfill)")
         if name == "backfill":
             p.add_argument("--days", type=float, default=BACKFILL_DAYS,
@@ -302,6 +433,7 @@ def main(argv: list[str] | None = None) -> int:
                            help="also delete every TD span from ClickHouse and recompute the affected rollups "
                                 "(rollups are snapshotted to td_purge_backup first)")
     args = ap.parse_args(argv)
+    configure(args.release, args.namespace, args.gateway)
     try:
         return args.fn(Kube(args.context), args)
     except (KubeError, ClickHouseError, OSError, ValueError) as e:

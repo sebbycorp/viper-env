@@ -11,19 +11,27 @@ from typing import Iterator
 
 NOT_FOUND = ("NotFound", "not found", "doesn't have a resource type", "No resources found")
 
-# (display name, kubectl get argv) -- everything `up` attaches to or the demo reads from.
-COMPONENTS: list[tuple[str, list[str]]] = [
-    ("gatewayclass enterprise-agentgateway", ["get", "gatewayclass", "enterprise-agentgateway"]),
-    ("gateway agentgateway-proxy", ["get", "gateway", "agentgateway-proxy", "-n", "agentgateway-system"]),
-    ("svc solo-enterprise-ui", ["get", "svc", "solo-enterprise-ui", "-n", "agentgateway-system"]),
-    ("svc management-clickhouse", ["get", "svc", "management-clickhouse", "-n", "agentgateway-system"]),
-    ("crd agentgatewaybackends.agentgateway.dev",
-     ["get", "crd", "agentgatewaybackends.agentgateway.dev"]),
-    ("crd enterpriseagentgatewaypolicies.enterpriseagentgateway.solo.io",
-     ["get", "crd", "enterpriseagentgatewaypolicies.enterpriseagentgateway.solo.io"]),
-    ("crd enterpriseagentgatewaybudgets.enterpriseagentgateway.solo.io",
-     ["get", "crd", "enterpriseagentgatewaybudgets.enterpriseagentgateway.solo.io"]),
-]
+INSTALL_AGW = "install Solo Enterprise for agentgateway (enterprise-agentgateway Helm chart)"
+INSTALL_UI = "install the Solo Enterprise management chart (Solo UI + ClickHouse)"
+
+
+def components(gateway: str = "agentgateway-proxy", ns: str = "agentgateway-system") -> list[tuple[str, list[str]]]:
+    """(what is missing -> what to install, kubectl get argv): everything `up` attaches to or the demo reads from."""
+    return [
+        (f"gatewayclass enterprise-agentgateway ({INSTALL_AGW})", ["get", "gatewayclass", "enterprise-agentgateway"]),
+        (f"gateway {ns}/{gateway} (create a Gateway on class enterprise-agentgateway, or pass --gateway/--namespace)",
+         ["get", "gateway", gateway, "-n", ns]),
+        (f"svc {ns}/solo-enterprise-ui ({INSTALL_UI}, or pass --namespace)", ["get", "svc", "solo-enterprise-ui", "-n", ns]),
+        (f"crd agentgatewaybackends.agentgateway.dev ({INSTALL_AGW} CRDs)",
+         ["get", "crd", "agentgatewaybackends.agentgateway.dev"]),
+        (f"crd enterpriseagentgatewaypolicies.enterpriseagentgateway.solo.io ({INSTALL_AGW} CRDs)",
+         ["get", "crd", "enterpriseagentgatewaypolicies.enterpriseagentgateway.solo.io"]),
+        (f"crd enterpriseagentgatewaybudgets.enterpriseagentgateway.solo.io ({INSTALL_AGW} CRDs, a version with budgets)",
+         ["get", "crd", "enterpriseagentgatewaybudgets.enterpriseagentgateway.solo.io"]),
+    ]
+
+
+COMPONENTS: list[tuple[str, list[str]]] = components()
 HELM_RELEASE = ("enterprise-agentgateway", "agentgateway-system")
 
 
@@ -75,7 +83,7 @@ class Kube:
         try:
             self.helm_chart_version(rel, ns)
         except KubeError:
-            missing.append(f"helm release {rel}")
+            missing.append(f"helm release {ns}/{rel} ({INSTALL_AGW}, or pass --release/--namespace)")
         return missing
 
     # ------------------------------------------------------------ port-forward

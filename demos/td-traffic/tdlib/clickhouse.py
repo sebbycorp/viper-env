@@ -57,6 +57,10 @@ class PurgeIncompleteError(ClickHouseError):
     pass
 
 
+class PurgePreVerifyError(ClickHouseError):
+    pass
+
+
 @dataclass
 class Rollup:
     mv: str
@@ -225,8 +229,16 @@ class ClickHouse:
     def views(self) -> tuple[list[Rollup], list[str]]:
         """(rollups fed by TD-carrying tables, row-level agw tables fed by otel_traces_json)."""
         rollups, row_tables = [], []
-        for r in self.json_rows(f"SELECT name, create_table_query, as_select FROM system.tables "
-                                f"WHERE database = '{DB}' AND engine = 'MaterializedView' ORDER BY name"):
+        mvs = self.json_rows(f"SELECT name, create_table_query, as_select FROM system.tables "
+                             f"WHERE database = '{DB}' AND engine = 'MaterializedView' ORDER BY name")
+        targets = {m.group(1) for r in mvs if (m := re.search(rf"\bTO {DB}\.(\w+)", r["create_table_query"]))}
+        rollup_targets = {t for t in targets if ROLLUP_RE.match(t)}
+        for r in mvs:
+            m_src = re.search(rf"\bFROM {DB}\.(\w+)", r["as_select"])
+            if m_src and m_src.group(1) in rollup_targets:
+                raise ClickHouseError(f"{r['name']} reads rollup table {m_src.group(1)}: a chained view the purge "
+                                      f"cannot recompute safely; refusing to purge")
+        for r in mvs:
             m_to = re.search(rf"\bTO {DB}\.(\w+)", r["create_table_query"])
             m_from = re.search(rf"\bFROM {DB}\.(\w+)", r["as_select"])
             if not m_to or not m_from or m_from.group(1) not in TD_SOURCES:
@@ -314,7 +326,24 @@ class ClickHouse:
         return self.json_rows(
             f"SELECT stamp, any(start) AS start, any(upper) AS upper, any(rollups) AS rollups, "
             f"max(trace_index) AS trace_index FROM {LEDGER} GROUP BY stamp "
-            f"HAVING countIf(status = 'started') > 0 AND countIf(status = 'verified') = 0 ORDER BY stamp")
+            f"HAVING countIf(status = 'started') > 0 AND countIf(status IN ('verified', 'aborted')) = 0 "
+            f"ORDER BY stamp")
+
+    restore_dir: str | None = None          # where restore_file writes (default: the temp dir; td.py: the cwd)
+    restore_cmd_prefix: str | None = None   # e.g. kubectl ... exec -i <pod> -- clickhouse-client ...; set by td.py
+
+    def restore_file(self, stamp: str, sql: list[str]) -> str:
+        """Write the restore SQL to td-restore-<stamp>.sql and return a ready-to-run command for it."""
+        import os
+        import tempfile
+        path = os.path.abspath(os.path.join(self.restore_dir or tempfile.gettempdir(), f"td-restore-{stamp}.sql"))
+        try:
+            with open(path, "w") as f:
+                f.write("\n".join(q.split("  -- ")[0] for q in sql) + "\n")
+        except OSError:
+            return "(could not write the restore file; run the SQL above with clickhouse-client --multiquery)"
+        prefix = self.restore_cmd_prefix or "clickhouse-client --multiquery"
+        return f'{prefix} < "{path}"'
 
     @staticmethod
     def restore_sql(stamp: str, start: str, upper: str, rollups: str, trace_index) -> list[str]:
@@ -352,8 +381,9 @@ class ClickHouse:
             for r in stale:
                 lines.append(f"purge {r['stamp']} (rollup range [{r['start']}, {r['upper']})) did not finish; "
                              f"its backup holds the pre-purge rollups. Restore with:")
-                lines += ["  " + q for q in self.restore_sql(r["stamp"], r["start"], r["upper"], r["rollups"],
-                                                             r["trace_index"])]
+                sql = self.restore_sql(r["stamp"], r["start"], r["upper"], r["rollups"], r["trace_index"])
+                lines += ["  " + q for q in sql]
+                lines.append("Ready to run (SQL saved to a file):\n  " + self.restore_file(r["stamp"], sql))
             raise PurgeIncompleteError(
                 "\n".join(lines) + "\nThen re-run. --force-new-backup starts a new purge anyway "
                 "(its snapshot would be taken from the current, possibly damaged, rollups).")
@@ -408,10 +438,24 @@ class ClickHouse:
             log(f"purge: FAILED after the snapshot. Rollups may be partly recomputed. Restore from {stamp} with:")
             for q in restore:
                 log("  " + q)
+            log("purge: ready to run (SQL saved to a file):")
+            log("  " + self.restore_file(stamp, restore))
 
         try:
             # 2. Real totals before (rollup - TD contribution).
             before = {ru.target: self.real_totals(ru, start, upper, td_filter) for ru in rollups}
+
+            # 2b. Pre-verify: what step 4 would insert must summarise to exactly `before`.
+            pre_diffs = []
+            for ru in rollups:
+                where = f"{self._time_range(ru.src_time, start, upper)} AND NOT {td_filter[ru.source]}"
+                pre = {k: v for k, v in self._summary(ru, f"({self._view_over(ru, where)})", start, upper).items()
+                       if any(x != 0 for x in v)}
+                if pre != before[ru.target]:
+                    keys = set(pre) ^ set(before[ru.target]) | {k for k in pre if pre.get(k) != before[ru.target].get(k)}
+                    pre_diffs.append(f"{ru.target}: {len(keys)} keys differ")
+            if pre_diffs:
+                raise PurgePreVerifyError("\n  ".join(pre_diffs))
 
             # 3. Row-level span tables: TD traces only.
             for t in row_tables:
@@ -439,6 +483,12 @@ class ClickHouse:
             if diffs:
                 raise PurgeVerificationError("real totals changed; TD source rows were NOT deleted.\nDifferences:\n  "
                                              + "\n  ".join(diffs))
+        except PurgePreVerifyError as e:
+            self._ledger(stamp, "aborted", _sql_ts(start), _sql_ts(upper), spec, has_index)
+            raise PurgeVerificationError(
+                f"purge {stamp} aborted before any change: the recomputed rollups would not match the real "
+                f"totals, so nothing was deleted (backup tables {BACKUP_DB}.*__{stamp} can be dropped).\n  {e}"
+            ) from None
         except BaseException:
             restore_hint()
             raise
@@ -458,7 +508,8 @@ class ClickHouse:
         log(f"purge: backup kept in {BACKUP_DB} (tables *__{stamp}). To restore:")
         for q in restore:
             log("  " + q)
-        log(f"purge: to drop every backup: DROP DATABASE {BACKUP_DB}")
+        log("  ready to run: " + self.restore_file(stamp, restore))
+        log(f"purge: to drop every backup: DROP DATABASE {BACKUP_DB} (only while no purge is incomplete)")
         return {"td_rows": n, "start": _sql_ts(start), "upper": _sql_ts(upper), "stamp": stamp,
                 "rollups": [ru.target for ru in rollups], "row_tables": row_tables,
                 "real_keys": {k: len(v) for k, v in before.items()}, "remaining": left}

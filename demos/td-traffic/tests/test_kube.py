@@ -111,8 +111,8 @@ def test_preflight_reports_missing_components(monkeypatch):
     f = FakeRun(responder)
     monkeypatch.setattr(kube_mod.subprocess, "run", f)
     missing = Kube("CTX").preflight()
-    assert "gatewayclass enterprise-agentgateway" in missing
-    assert "svc solo-enterprise-ui" in missing
+    assert any(m.startswith("gatewayclass enterprise-agentgateway (install ") for m in missing)
+    assert any(m.startswith("svc agentgateway-system/solo-enterprise-ui (install ") for m in missing)
     assert len(missing) == 2
 
     f.calls.clear()
@@ -142,3 +142,107 @@ def test_restore_values_only_touch_budget_dimensions():
     assert td.restored_values(current, {}) == {"licensing": {"k": "v"}}
     orig = {"budgetDimensions": {"enabled": False}}
     assert td.restored_values(current, orig) == {"licensing": {"k": "v"}, "budgetDimensions": {"enabled": False}}
+
+
+TD_DIMS = {"enabled": True, "config": {"hierarchy": [{"id": "organization"}],
+                                         "attributes": [{"id": "client", "displayName": "Client Tool"}]}}
+
+
+def _down_responder(saved_rc, saved_err, values):
+    def responder(argv):
+        if argv[0] == "helm" and "values" in argv:
+            return (0, json.dumps(values), "")
+        if argv[0] == "helm":
+            return (0, json.dumps([{"name": "enterprise-agentgateway", "chart": "enterprise-agentgateway-v1"}]), "")
+        if "configmap" in argv and "td-demo-saved-values" in argv:
+            return (saved_rc, "", saved_err)
+        if "namespace" in argv and "get" in argv:
+            return (0, json.dumps({"metadata": {"labels": {"demo": "td"}}}), "")
+        return (0, "", "")
+    return responder
+
+
+def test_down_refuses_when_td_dims_present_but_nothing_saved(monkeypatch, capsys):
+    f = FakeRun(_down_responder(1, 'Error from server (NotFound): configmaps "td-demo-saved-values" not found',
+                                {"budgetDimensions": TD_DIMS, "other": 1}))
+    monkeypatch.setattr(kube_mod.subprocess, "run", f)
+    assert load_td().main(["down", "--context", "CTX"]) == 1
+    assert not any("delete" in a for a in f.calls)
+    out = capsys.readouterr().out
+    assert "--reset-values" in out and "nothing deleted" in out
+
+
+def test_down_proceeds_when_nothing_saved_and_no_td_dims(monkeypatch):
+    f = FakeRun(_down_responder(1, 'Error from server (NotFound): configmaps "td-demo-saved-values" not found',
+                                {"other": 1}))
+    monkeypatch.setattr(kube_mod.subprocess, "run", f)
+    assert load_td().main(["down", "--context", "CTX"]) == 0
+    assert any("delete" in a and "namespace" in a for a in f.calls)
+    assert not any(a[0] == "helm" and "upgrade" in a for a in f.calls)
+
+
+def test_saved_values_raises_on_non_notfound_error(monkeypatch):
+    f = FakeRun(_down_responder(1, "Unable to connect to the server: dial tcp: i/o timeout", {}))
+    monkeypatch.setattr(kube_mod.subprocess, "run", f)
+    td = load_td()
+    with pytest.raises(KubeError):
+        td.saved_values(Kube("CTX"))
+    assert td.main(["down", "--context", "CTX"]) == 1
+    assert not any("delete" in a for a in f.calls)
+
+
+def test_early_window_warning():
+    from datetime import datetime, timedelta, timezone
+    td = load_td()
+    start, _ = td.budget_window(datetime(2026, 10, 21, tzinfo=timezone.utc))
+    assert "WARNING" in td.early_window_warning(start + timedelta(days=2))
+    assert td.early_window_warning(start + timedelta(days=6)) is None
+
+
+def test_discover_clickhouse_by_name_pattern(monkeypatch):
+    pods = {"items": [{"metadata": {"name": "clickhouse-operator-abc"}, "status": {"phase": "Running"}},
+                      {"metadata": {"name": "mgmt-clickhouse-shard0-0"}, "status": {"phase": "Running"}},
+                      {"metadata": {"name": "solo-enterprise-ui-1"}, "status": {"phase": "Running"}}]}
+    secs = {"items": [{"metadata": {"name": "mgmt-clickhouse-auth"}, "data": {"username": "dQ==", "password": "cA=="}},
+                      {"metadata": {"name": "other"}, "data": {"username": "x", "password": "y"}}]}
+
+    def responder(argv):
+        if "pods" in argv:
+            return (0, json.dumps(pods), "")
+        if "secrets" in argv:
+            return (0, json.dumps(secs), "")
+        return (0, "", "")
+    f = FakeRun(responder)
+    monkeypatch.setattr(kube_mod.subprocess, "run", f)
+    td = load_td()
+    assert td.discover_clickhouse(Kube("CTX"), "ns1") == ("ns1", "mgmt-clickhouse-shard0-0", "mgmt-clickhouse-auth")
+    pods["items"] = []
+    with pytest.raises(KubeError, match="no running \\*clickhouse\\* pod in namespace ns1"):
+        td.discover_clickhouse(Kube("CTX"), "ns1")
+
+
+def test_flags_reconfigure_gateway_and_namespace():
+    td = load_td()
+    td.configure("rel", "gw-ns", "my-gw")
+    try:
+        assert td.manifests.GATEWAY == {"name": "my-gw", "namespace": "gw-ns"}
+        assert (td.live.GATEWAY_TARGET, td.live.GATEWAY_NS) == ("svc/my-gw", "gw-ns")
+        assert td.budget_sync.UI_NS == "gw-ns" and td.kube_mod.HELM_RELEASE == ("rel", "gw-ns")
+    finally:
+        td.configure("enterprise-agentgateway", "agentgateway-system", "agentgateway-proxy")
+
+
+def test_ui_url_nodeport(monkeypatch):
+    svc = {"spec": {"type": "NodePort", "ports": [{"port": 80, "nodePort": 30080}]}, "status": {}}
+    nodes = {"items": [{"status": {"addresses": [{"type": "InternalIP", "address": "10.0.0.5"}]}}]}
+
+    def responder(argv):
+        if "svc" in argv:
+            return (0, json.dumps(svc), "")
+        if "nodes" in argv:
+            return (0, json.dumps(nodes), "")
+        return (0, "", "")
+    monkeypatch.setattr(kube_mod.subprocess, "run", FakeRun(responder))
+    assert load_td().ui_url(Kube("CTX")).startswith("http://10.0.0.5:30080")
+    svc["spec"] = {"type": "ClusterIP", "ports": [{"port": 80}]}
+    assert "port-forward svc/solo-enterprise-ui" in load_td().ui_url(Kube("CTX"))
