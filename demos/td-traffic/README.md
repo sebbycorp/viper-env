@@ -121,6 +121,9 @@ Order matters. Do not run `sync-budgets` while `live` is running.
     groups and the org sit at about 60-90%;
   - daily Tokens: the 3 biggest teams. `sync-budgets` re-sizes them on today's counter
     (its catch-up requests charge tokens too) so they sit at 50-90%.
+- Entry names are part of the gateway's counter key. Every entry a request charges must start
+  from the same counter state, so the org / group / team entries are named `*-month-usd`.
+  The older `*-monthly-usd` counters are left unused and expire with their window.
 - `sync-budgets` closes the gap per virtual key (each team's gap split by its keys' share), so
   team, group, org, project and user counters all line up with the generated history.
 - **Early in a budget window** (less than 5 days since it started) the window-to-date spend is

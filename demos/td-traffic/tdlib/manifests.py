@@ -126,24 +126,27 @@ def _limit(projected: float, target: float, lo: float, hi: float) -> int:
     return max(1, round(projected / target))
 
 
+# Entry names are part of the gateway's Redis counter key, so every entry a request charges must start from
+# the same counter state: the org / group / team names changed ("-month-usd") when project and user entries
+# were added, so all 38 USD entries are filled together by sync-budgets (the old counters expire with the window).
 def org_budget_name(org_name: str) -> str:
-    return f"{_slug(org_name)}-org-monthly-usd"
+    return f"{_slug(org_name)}-org-month-usd"
 
 
 def group_budget_name(group: str) -> str:
-    return f"{_slug(group)}-monthly-usd"
+    return f"group-{_slug(group)}-month-usd"
 
 
 def team_budget_name(team: str) -> str:
-    return f"team-{_slug(team)}-monthly-usd"
+    return f"team-{_slug(team)}-month-usd"
 
 
 def project_budget_name(project: str) -> str:
-    return f"project-{_slug(project)}-monthly-usd"
+    return f"project-{_slug(project)}-month-usd"
 
 
 def user_budget_name(user: str) -> str:
-    return f"user-{_slug(user.split('@')[0].replace('.', '-'))}-monthly-usd"
+    return f"user-{_slug(user.split('@')[0].replace('.', '-'))}-month-usd"
 
 
 def token_budget_name(team: str) -> str:
