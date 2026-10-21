@@ -42,7 +42,7 @@ MODELS: dict[str, ModelRoute] = {
 }
 
 
-@dataclass(slots=True)
+@dataclass
 class Request:
     ts: datetime
     key: VirtualKey

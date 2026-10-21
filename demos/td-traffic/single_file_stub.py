@@ -7,8 +7,8 @@ Usage: python3 td-traffic.py <command> --context <kube-context>   (see --help)
 """
 import sys
 
-if sys.version_info < (3, 11):
-    sys.exit(f"td-traffic needs Python 3.11+ (this is {sys.version.split()[0]}). With uv installed, run:\n"
+if sys.version_info < (3, 9):
+    sys.exit(f"td-traffic needs Python 3.9+ (this is {sys.version.split()[0]}). With uv installed, run:\n"
              "  uv run --python 3.12 python td-traffic.py <command> ...")
 
 import base64
@@ -39,7 +39,7 @@ def payload_dir() -> Path:
         sys.exit(f"td-traffic: cannot unpack to {root} ({e}). Set TD_TRAFFIC_CACHE to a private writable directory.")
 
 
-def _private_root(root: Path) -> Path | None:
+def _private_root(root: Path) -> "Path | None":
     """The cache root if it is ours alone (created 0700, owned by us, not group/other writable)."""
     try:
         root.mkdir(mode=0o700, parents=True, exist_ok=True)
