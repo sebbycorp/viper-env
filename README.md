@@ -89,6 +89,7 @@ Operator landing page (not GitOps): http://172.16.10.126:3000 — see
 | TypeSafe / Jev MVP (ns `kagent`) | [docs/typesafe-jev.md](docs/typesafe-jev.md) |
 | FortiGate agent plan (upstream k8s-viper) | [docs/fortigate-agent-omni.md](docs/fortigate-agent-omni.md) |
 | Homepage cards + OSS gateway LXCs | [docs/lab-homepage.md](docs/lab-homepage.md) |
+| TD Bank demo traffic for the agentgateway UI (laptop tool) | [demos/td-traffic/README.md](demos/td-traffic/README.md) |
 | Doc index | [docs/README.md](docs/README.md) |
 
 Feature gates `PodCertificateRequest` and `ClusterTrustBundle` are
