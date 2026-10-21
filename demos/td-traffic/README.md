@@ -66,7 +66,7 @@ Order matters. Do not run `sync-budgets` while `live` is running.
 
 1. `up` (or `replan-budgets` if the demo is already up and only the window moved).
 2. `backfill --replace`. About 5 minutes for 30 days.
-3. `sync-budgets`.
+3. `sync-budgets`. About 6 minutes (it waits for a rollup bucket to close before its purge).
 4. `live`, started 10 minutes before the call (`--duration 2h`, or Ctrl-C afterwards).
 5. `status`, to confirm counts and the next budget rollover.
 6. Pages to show:
