@@ -111,6 +111,23 @@ def test_down_removes_legacy_mock(monkeypatch):
     assert "--ignore-not-found" in legacy[0] and "delete" in legacy[0] and "td-demo" in legacy[0]
 
 
+def test_up_removes_legacy_mock(monkeypatch):
+    f = FakeRun(lambda argv: (0, "", ""))
+    monkeypatch.setattr(kube_mod.subprocess, "run", f)
+    td = load_td()
+    monkeypatch.setattr(Kube, "preflight", lambda self: [])
+    monkeypatch.setattr(Kube, "helm_chart_version", lambda self, *a: "v1")
+    monkeypatch.setattr(Kube, "helm_upgrade_reuse", lambda self, *a: None)
+    monkeypatch.setattr(td, "discover_clickhouse", lambda kube: ("ns", "pod", "sec"))
+    monkeypatch.setattr(td, "save_values_once", lambda kube: None)
+    monkeypatch.setattr(td, "warn_early_window", lambda: None)
+    assert td.main(["up", "--context", "CTX"]) == 0
+    legacy = [a for a in f.calls if "deploy/td-mock-llm" in a]
+    assert legacy and "--ignore-not-found" in legacy[0]
+    for r in ("svc/td-mock-llm", "cm/td-mock-llm"):
+        assert r in legacy[0]
+
+
 def test_preflight_reports_missing_components(monkeypatch):
     def responder(argv):
         if ("gatewayclass" in argv and "enterprise-agentgateway" in argv) or \

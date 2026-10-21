@@ -84,8 +84,10 @@ def test_backends_point_at_provider_hosts(objs):
     domains = ("openai.azure.com", "amazonaws.com", "mistral.ai")
     for b in kind(objs, "AgentgatewayBackend"):
         prov = b["spec"]["ai"]["provider"]
-        assert "backendRef" not in prov["custom"] and "td-demo" not in json.dumps(b["spec"])
+        assert "backendRef" not in prov["custom"] and "svc.cluster.local" not in json.dumps(b["spec"])
         assert prov["host"].endswith(domains) and "." in prov["host"]
+        if prov["host"].endswith("openai.azure.com"):
+            assert "placeholder" in prov["host"]
 
 
 def test_policy_targets_every_route(objs):

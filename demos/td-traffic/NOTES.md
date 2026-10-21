@@ -2,7 +2,7 @@
 
 Verified on 2026-10-21 against kube context `maniak-omni-viper`, which runs
 enterprise-agentgateway v2026.10.0 and management/UI 0.5.9. Everything here was tried
-live: the mock ran in `td-demo`, routes went on `agentgateway-proxy` with host
+live (v1 history: the mock ran in `td-demo`; v2 has no mock, see manifests.py), routes went on `agentgateway-proxy` with host
 `td.demo.local`, and results were read back from ClickHouse. All spike objects were then
 deleted and the Helm value restored. The span template is
 `tdlib/span_template.json`.
@@ -24,7 +24,7 @@ deleted and the Helm value restored. The span template is
 ## Model routes (ruling 1, for `usage.MODELS`)
 
 Every route is an `AgentgatewayBackend` with `spec.ai.provider.custom`. Its
-`formats: [{type: Completions}]` and `backendRef: {name: td-mock-llm, port: 8080}`
+`formats: [{type: Completions}]` and `backendRef: {name: td-mock-llm, port: 8080}` (v1 history; v2 backends use provider-level `host` + `port: 443`, no backendRef)
 were verified, and so was a matching HTTPRoute on `agentgateway-proxy` with
 `hostnames: [td.demo.local]`. Each (providerOverride, model) pair below returned a non-zero
 `agw.ai.usage.cost.total`.
@@ -591,7 +591,7 @@ Checked on omni-viper on 2026-10-21 (ext-cache Redis, ClickHouse `system.query_l
     prints that stamp's restore SQL; `--force-new-backup` overrides (on `backfill` and `down`).
     Stamps from before the ledger existed have no rows and never block.
 
-## Mock deployment (worked)
+## Mock deployment (worked; v1 history, removed in v2)
 
 The spec in the brief worked as given: a ConfigMap `td-mock-llm` (key `server.py`), a
 Deployment on `python:3.12-slim` running `python -u /app/server.py` with requests 25m /

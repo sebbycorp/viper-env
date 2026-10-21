@@ -52,6 +52,7 @@ TD_KINDS = [
     "httproutes.gateway.networking.k8s.io",
     "agentgatewaybackends.agentgateway.dev",
 ]
+# deployments / services stay listed on purpose: `status` then reveals a stale v1 mock.
 STATUS_KINDS = [*TD_KINDS, "secrets", "configmaps", "deployments.apps", "services"]
 EARLY_WINDOW = timedelta(days=5)
 UI_SVC = "solo-enterprise-ui"
@@ -203,6 +204,12 @@ def restore_values(kube: Kube, saved: dict) -> None:
 
 # ---------------------------------------------------------------- subcommands
 
+def _remove_legacy_mock(kube: Kube) -> None:
+    """Delete the v1 mock workload (Deployment, Service, ConfigMap), if a v1 `up` left it behind."""
+    kube.run(["delete", f"deploy/{MOCK}", f"svc/{MOCK}", f"cm/{MOCK}", "-n", NAMESPACE,
+              "--ignore-not-found"], check=False)
+
+
 def cmd_up(kube: Kube, args) -> int:
     missing = kube.preflight()
     try:
@@ -217,6 +224,7 @@ def cmd_up(kube: Kube, args) -> int:
     budgets = planned_budgets(org, args.seed)
     objs = render_all(org, budgets)
     kube.apply(objs[:1])                       # namespace, so the saved values can live in it
+    _remove_legacy_mock(kube)
     save_values_once(kube)
     kube.apply(objs)
     log(f"applied {len(objs)} objects ({len(org.keys)} virtual keys, {len(budgets)} budgets)")
@@ -270,8 +278,7 @@ def cmd_down(kube: Kube, args) -> int:
     else:
         restore_values(kube, saved)
     kube.delete_labeled(TD_KINDS, NAMESPACE)
-    kube.run(["delete", f"deploy/{MOCK}", f"svc/{MOCK}", f"cm/{MOCK}", "-n", NAMESPACE,
-              "--ignore-not-found"], check=False)      # v1 mock workload, if a v1 `up` left it behind
+    _remove_legacy_mock(kube)
     p = kube.kubectl(["get", "namespace", NAMESPACE, "-o", "json"], check=False)
     if p.returncode == 0 and json.loads(p.stdout)["metadata"].get("labels", {}).get("demo") == "td":
         kube.run(["delete", "namespace", NAMESPACE, "--ignore-not-found", "--wait=true", "--timeout=180s"])

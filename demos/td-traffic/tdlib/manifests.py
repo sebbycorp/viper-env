@@ -21,7 +21,7 @@ GATEWAY = {"name": "agentgateway-proxy", "namespace": "agentgateway-system"}
 MOCK = "td-mock-llm"                    # v1 mock workload; only `down` still names it (legacy cleanup)
 # Public provider API hosts the backends point at. Nothing is ever sent there: v2 writes spans straight to
 # ClickHouse, so the backends only have to exist and be Accepted (no auth secrets needed).
-PROVIDER_HOSTS = {"azure": "tdbank.openai.azure.com",
+PROVIDER_HOSTS = {"azure": "td-demo-placeholder.openai.azure.com",
                   "aws.bedrock": "bedrock-runtime.us-east-1.amazonaws.com",
                   "mistral": "api.mistral.ai"}
 KEYS_SECRET = "td-virtual-keys"
