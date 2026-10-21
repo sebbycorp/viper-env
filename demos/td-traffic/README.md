@@ -10,7 +10,7 @@ straight into the Solo UI's ClickHouse.
 
 Prerequisites on your laptop:
 
-- Python 3.11+ (or [`uv`](https://docs.astral.sh/uv/)), `kubectl` and `helm` on the PATH.
+- Python 3.9+ (stock macOS `python3` works), `kubectl` and `helm` on the PATH.
 - A kube context for a cluster that runs Solo Enterprise agentgateway (a Gateway, default
   `agentgateway-proxy`) and the Solo UI (management chart, with its ClickHouse).
 
@@ -25,16 +25,16 @@ gh release download -R sebbycorp/viper-env --pattern td-traffic.py
 Or take the prebuilt script straight from the repo: [`demos/td-traffic/release/td-traffic.py`](release/td-traffic.py)
 (regenerate it with `scripts/build-td-traffic.sh` and copy `dist/td-traffic.py` there after changing the code).
 
-Run it. This form works on stock macOS (its `python3` is 3.9):
+Run it (works with the stock macOS `python3`, 3.9+):
 
 ```bash
-uv run --python 3.12 python td-traffic.py demo   --context <ctx>   # one-time setup, ~10 min, then it exits
-uv run --python 3.12 python td-traffic.py live   --context <ctx>   # keeps running until Ctrl-C
-uv run --python 3.12 python td-traffic.py status --context <ctx>   # object and span counts, budget window
-uv run --python 3.12 python td-traffic.py down --purge-history --context <ctx>   # remove everything
+python3 td-traffic.py demo   --context <ctx>   # one-time setup, ~10 min, then it exits
+python3 td-traffic.py live   --context <ctx>   # keeps running until Ctrl-C
+python3 td-traffic.py status --context <ctx>   # object and span counts, budget window
+python3 td-traffic.py down --purge-history --context <ctx>   # remove everything
 ```
 
-With Python 3.11+ installed, `python3 td-traffic.py <command> --context <ctx>` does the same.
+`uv run --python 3.12 python td-traffic.py <command> --context <ctx>` works too.
 
 - `demo` is the one-time setup: it creates the config (keys, budgets, routes, dimensions), writes
   30 days of history into ClickHouse, and sets the Budgets page. It prints the Solo UI address
@@ -165,8 +165,8 @@ recovery commands.
 ## Cleanup
 
 ```bash
-uv run --python 3.12 python td-traffic.py down --context <ctx>                  # keep history
-uv run --python 3.12 python td-traffic.py down --context <ctx> --purge-history  # remove everything
+python3 td-traffic.py down --context <ctx>                  # keep history
+python3 td-traffic.py down --context <ctx> --purge-history  # remove everything
 ```
 
 Platform details and verified behavior are in [NOTES.md](NOTES.md). Tests:

@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.9"
 # dependencies = []
 # ///
 """TD Bank synthetic AI-assistant traffic for the Solo Enterprise agentgateway UI.
@@ -408,8 +408,8 @@ def cmd_demo(kube: Kube, args) -> int:
         return rc
     log("demo: ready.")
     log(f"  Solo UI:   {ui_url(kube)}")
-    log(f"  next:      uv run --python 3.12 python td-traffic.pyz live --context {kube.context}   (Ctrl-C stops)")
-    log(f"  cleanup:   uv run --python 3.12 python td-traffic.pyz down --purge-history --context {kube.context}")
+    log(f"  next:      python3 td-traffic.py live --context {kube.context}   (Ctrl-C stops)")
+    log(f"  cleanup:   python3 td-traffic.py down --purge-history --context {kube.context}")
     return 0
 
 
