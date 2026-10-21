@@ -418,6 +418,9 @@ Checked on omni-viper on 2026-10-21, right after a 30-day backfill of 559,202 TD
   `charged_micro_usd` path), not from spans. Writing spans, and the
   `agw.ai.budgets.*` attributes inside them, does not move it. The budget counters are
   **not** faked (ruling).
+- **Correction (Task 8):** the counters live in Redis, but the page *reads* them from ClickHouse:
+  see "Budget counters: where they live and how the page reads them" below. The $1.37 above was the
+  latest `current_usage` in a surviving outcome span, not a direct counter read.
 
 What this means for the demo:
 - Right after `up` + `backfill`, every budget shows about 0% used, even though the 30-day
@@ -429,6 +432,86 @@ What this means for the demo:
   must say this. Two ways to get "over/near" budgets on demo day: size limits on
   expected live spend (e.g. a few dollars for the over/near teams), or show the per-team
   spend graphs against the limits instead of the Budgets usage bars.
+
+## Budget counters: where they live and how the page reads them (verified, Task 8)
+
+Checked on omni-viper on 2026-10-21 (ext-cache Redis, ClickHouse `system.query_log`, live requests).
+- **Store:** Redis in `ext-cache-enterprise-agentgateway` (rate-limiter descriptors). There is one string key
+  per budget entry and window, holding micro-USD. Example:
+  `set|solo.io|budget.id^td-demo/td-budgets/td-org-monthly-usd|…|organization^TD|1791072000`.
+- **Window:** `window: {unit: Month}` is a **fixed 30-day period aligned to the Unix epoch**, not the
+  calendar month. On 2026-10-21 the key suffix is `1791072000`, which is 2026-10-04 00:00 UTC (= 691 × 2,592,000 s).
+  The next reset is 2026-11-03 00:00 UTC. Key TTL is about 30 days. Outcome spans carry
+  `reset_after_ms: 2592000000`. A `Day` window is aligned the same way (`1792540800` = 2026-10-21 00:00 UTC).
+- **What the Budgets page shows** (`AgentgatewayCostAPI/ListBudgets`, field `spent`): the UI backend
+  runs, per entry, `argMaxIf(current_usage, Timestamp)` over the gateway's **`agw.ai.budgets.outcome`**
+  spans with `phase = 'final_debit_result'`. The source is `platformdb.otel_traces_json`, with
+  `SpanAttributes.agw.ai.budgets.statuses[].{id, current_usage}`. The time range starts at the budget's
+  `Enforced` condition time. So the page shows the counter value as of the **latest live request that
+  hit that entry**.
+- The outcome span is the "attribute-less second span" of every live TD trace mentioned in Task 7. It
+  is not attribute-less: it has no LLM attributes, but it carries the budget statuses.
+- Consequences:
+  - A trace-level TD purge (`down --purge-history`, `backfill --replace`, the sync marker purge)
+    deletes outcome spans. The page then shows a stale value, or 0, while the Redis counter is unchanged.
+    The next live request on an entry fixes that entry. `sync-budgets` sends one ordinary request per team
+    before reading and after its markers for this reason.
+  - Re-applying the budget object can move the `Enforced` time. That hides older outcome spans until
+    the next request.
+  - **Proxy restart: counters survive.** Verified with ListBudgets before and after
+    `kubectl rollout restart deploy/agentgateway-proxy`: all 21 entries were identical. Afterwards, new
+    requests kept charging on top of the old counter. So `live` does **not** run `sync-budgets` at
+    start, and there is no `--no-sync` flag.
+- Reading ListBudgets programmatically: `POST /api/autoauth/token` `{"user_type":"admin"}` on
+  `svc/solo-enterprise-ui:80` (the UI's own auto-auth). Then
+  `POST /api/rpc.agentgateway.solo.io.AgentgatewayCostAPI/ListBudgets` with grpc-web+proto, an empty
+  request frame, and `Authorization: Bearer`. `BudgetEntry` fields: 1 name, 2 subject map, 3 limit
+  {1 unit, 2 amount}, 4 window, 5 action, 6 spent (double USD). See `budget_sync.decode_list_budgets`.
+
+## Live traffic and budget sync (Task 8)
+
+- `td.py live --context C [--duration 10m] [--speed X] [--min-rpm 6] [--concurrency 4]`:
+  - Port-forwards to `svc/agentgateway-proxy:8080`.
+  - Sends `usage.requests_for_window` per 15 s window, with the `min_rpm` fill-in floor.
+  - Headers are `Host: td.demo.local`, the key's Bearer token, the client UA, and `x-td-*`.
+  - On a connection error it closes and re-opens the port-forward with backoff 1, 2, 4 … 30 s, then
+    re-sends the same request.
+  - Prints a one-line summary every 30 s.
+- Live 5-minute check, 2026-10-21 14:58–15:04 UTC (Toronto 11:00, peak):
+  - 224 sent: 222 × 200, one 429, one 500. Spend $20.35.
+  - All 5 client values appeared in new spans.
+  - A proxy restart mid-run cost one `RemoteDisconnected`. The tool did one reconnect and re-sent; no
+    request failed.
+  - 213 of the 224 requests have spans in ClickHouse. The rest were most likely in flight on the old pod
+    when it was replaced. Their spans were never exported, but the gateway charged them.
+- `td.py sync-budgets --context C [--dry-run]`:
+  1. Sends one ordinary request per team, so the page is current.
+  2. Reads ListBudgets.
+  3. Computes targets: generated spend (`generate`, seed 42) over [budget window start, now) per team.
+     Group and org targets are sums.
+  4. Plans per-team gaps as ≤ 20 marker requests per team, each ≤ 250k input tokens, on bedrock-opus /
+     azure-gpt in the team's Opus vs. other spend share. When the gap exceeds 20 plausible requests,
+     the output-token count grows. Up to ~18M output tokens per request were priced and charged exactly.
+  5. Sends one ordinary request per team again.
+  6. Purges the marker spans with the Task 7 machinery, `predicate = sync_span_predicate()`. Spans keep
+     `url.path` but not the raw user agent, so the marker is the path segment `/td-budget-sync`;
+     the UA `td-budget-sync/1.0` is sent too.
+  7. Prints the table.
+- **Run it once after `backfill`** (and again after a new backfill or a window reset). Re-running later
+  adds the generated spend since the previous run, although ClickHouse history ended at the backfill.
+  Spend from `live` in between is real and already counted.
+- First sync on 2026-10-21 15:05 UTC: 300 marker requests, $28,911.32. Counters equal targets to the cent.
+  The purge verified 152 real keys identical. A tool-independent check (`task-8-work/hand_totals.py`)
+  found all non-marker totals identical. The only rollup change was the earlier probe marker
+  (1 request, $0.006).
+- Counters vs. ClickHouse TD spend in the same window (2026-10-04 → now): $28,990 vs. $28,746
+  (+0.8%; per team ±3%). The difference is RNG noise between the regenerated history and the backfilled
+  one, plus the generated spend after the backfill ended.
+- **Budget mix after sync (the limits from `plan_budgets` are unchanged):** org 40.8%, groups
+  38.9–47.2%, teams 20.0–73.3%. That is 0 over and 0 near. `plan_budgets` sizes limits on the
+  *projected full calendar month*, while the counter holds the epoch-aligned 30-day window to date
+  (17.6 of 30 days on 10-21). The planned "2 over / 2 near / groups 60–90%" is not reachable on honest
+  window-to-date spend. Changing limits is a controller decision (Task 8 NEEDS_CONTEXT).
 
 ## Backfill and purge (Task 7)
 

@@ -4,7 +4,7 @@
 # ///
 """TD Bank synthetic AI-assistant traffic for the Solo Enterprise agentgateway UI.
 
-    uv run demos/td-traffic/td.py {up,backfill,live,down,status} --context <kube-context>
+    uv run demos/td-traffic/td.py {up,backfill,sync-budgets,live,down,status} --context <kube-context>
 """
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from typing import Iterator
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+from tdlib import budget_sync, live  # noqa: E402
 from tdlib.clickhouse import SPANS_TABLE, ClickHouse, ClickHouseError  # noqa: E402
 from tdlib.kube import Kube, KubeError  # noqa: E402
 from tdlib.manifests import (  # noqa: E402
@@ -221,9 +222,19 @@ def cmd_status(kube: Kube, args) -> int:
     return 0
 
 
-def cmd_todo(kube: Kube, args) -> int:
-    log(f"`{args.cmd}` is not implemented yet")
-    return 2
+def cmd_live(kube: Kube, args) -> int:
+    duration = live.parse_duration(args.duration) if args.duration else None
+    stats = live.run_live(kube, build_org(), speed=args.speed, min_rpm=args.min_rpm, concurrency=args.concurrency,
+                          duration=duration, rates=load_rates(RATES_PATH), seed=args.seed, log=log)
+    log("live: clients " + ", ".join(f"{k}={v}" for k, v in sorted(stats.clients.items())))
+    return 0 if stats.sent and not stats.failed else (0 if stats.interrupted else 1)
+
+
+def cmd_sync_budgets(kube: Kube, args) -> int:
+    rows = budget_sync.run_sync(kube, build_org(), rates=load_rates(RATES_PATH), seed=args.seed, log=log,
+                                open_clickhouse=lambda: open_clickhouse(kube), dry_run=args.dry_run)
+    print(budget_sync.format_table(rows), flush=True)
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -234,7 +245,9 @@ def main(argv: list[str] | None = None) -> int:
         ("down", cmd_down, "restore Helm budgetDimensions and delete every TD object"),
         ("status", cmd_status, "count TD objects and TD span rows"),
         ("backfill", cmd_backfill, "write synthetic TD history straight into ClickHouse"),
-        ("live", cmd_todo, "send live traffic (Task 8)"),
+        ("sync-budgets", cmd_sync_budgets,
+         "top up the gateway budget counters to the generated history (marker spans purged afterwards)"),
+        ("live", cmd_live, "send live TD traffic through the gateway (Ctrl-C stops)"),
     ]:
         p = sub.add_parser(name, help=hlp)
         p.add_argument("--context", required=True, help="kube context (required; the current one is never used)")
@@ -248,6 +261,15 @@ def main(argv: list[str] | None = None) -> int:
                            help="purge the existing TD history first (otherwise backfill refuses)")
             p.add_argument("--seed", type=int, default=SEED, help="traffic seed (same as `up` budget planning)")
             p.add_argument("--batch", type=int, default=BATCH, help="rows per INSERT")
+        if name == "live":
+            p.add_argument("--duration", help="how long to run, e.g. 90s, 10m, 1h (default: until Ctrl-C)")
+            p.add_argument("--speed", type=float, default=1.0, help="rate multiplier on the usage model (default 1)")
+            p.add_argument("--min-rpm", type=float, default=6.0, help="floor in requests/minute (default 6)")
+            p.add_argument("--concurrency", type=int, default=4, help="parallel senders (default 4)")
+            p.add_argument("--seed", type=int, default=None, help="random seed (default: random)")
+        if name == "sync-budgets":
+            p.add_argument("--seed", type=int, default=SEED, help="history seed (same as backfill)")
+            p.add_argument("--dry-run", action="store_true", help="print the plan and table; send nothing")
         if name in ("backfill", "down"):
             p.add_argument("--force-new-backup", action="store_true",
                            help="purge even though an earlier purge never finished (restore that one first!)")
@@ -258,7 +280,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     try:
         return args.fn(Kube(args.context), args)
-    except (KubeError, ClickHouseError, OSError) as e:
+    except (KubeError, ClickHouseError, OSError, ValueError) as e:
         log(f"error: {e}")
         return 1
 

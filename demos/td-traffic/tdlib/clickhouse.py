@@ -169,12 +169,15 @@ class ClickHouse:
             return False
 
     # ------------------------------------------------------------ TD reads
-    def count_td(self) -> int:
-        return int(self.query(f"SELECT count() FROM {SPANS_TABLE} WHERE {td_span_predicate()} FORMAT TSV").strip() or 0)
+    def count_td(self, predicate: str | None = None) -> int:
+        """Spans matching `predicate` (default: every TD span, `td_span_predicate()`)."""
+        pred = predicate or td_span_predicate()
+        return int(self.query(f"SELECT count() FROM {SPANS_TABLE} WHERE {pred} FORMAT TSV").strip() or 0)
 
-    def td_window(self) -> tuple[int, str, str]:
+    def td_window(self, predicate: str | None = None) -> tuple[int, str, str]:
+        pred = predicate or td_span_predicate()
         (r,) = self.json_rows(f"SELECT count() AS n, toString(min(Timestamp)) AS lo, toString(max(Timestamp)) AS hi "
-                              f"FROM {SPANS_TABLE} WHERE {td_span_predicate()}")
+                              f"FROM {SPANS_TABLE} WHERE {pred}")
         return int(r["n"]), r["lo"], r["hi"]
 
     def cluster_name(self, default: str) -> str:
@@ -300,10 +303,18 @@ class ClickHouse:
 
     # ------------------------------------------------------------ purge
     def purge_td(self, now: datetime | None = None, log: Callable[[str], None] = print,
-                 sleep: Callable[[float], None] = time.sleep, force_new_backup: bool = False) -> dict:
-        n, lo_s, hi_s = self.td_window()
+                 sleep: Callable[[float], None] = time.sleep, force_new_backup: bool = False,
+                 predicate: str | None = None, label: str = "TD") -> dict:
+        """Purge the spans matching `predicate` (default: every TD span) and their traces, safely.
+
+        A narrower predicate (e.g. budget_sync.sync_span_predicate(), the sync marker spans) runs the
+        same machinery: the frozen ids, snapshot, ledger and verification all use it, and "real" totals
+        are then everything else, other TD spans included.
+        """
+        pred = predicate or td_span_predicate()
+        n, lo_s, hi_s = self.td_window(pred)
         if n == 0:
-            log("purge: no TD spans in ClickHouse; nothing to do")
+            log(f"purge: no {label} spans in ClickHouse; nothing to do")
             return {"td_rows": 0}
         self._ledger_init()
         stale = self.incomplete_purges()
@@ -322,14 +333,13 @@ class ClickHouse:
         upper = _floor(now - LAG, 5)
         if hi >= upper:                       # TD spans at the live edge: let their bucket close first
             wait = ((_floor(hi, 5) + timedelta(minutes=5) + LAG) - now).total_seconds()
-            log(f"purge: newest TD span {hi_s[:19]} is at the live edge; waiting {wait:.0f}s for its bucket to close")
+            log(f"purge: newest {label} span {hi_s[:19]} is at the live edge; waiting {wait:.0f}s for its bucket to close")
             sleep(max(0.0, wait))
             now = now + timedelta(seconds=max(0.0, wait))
             upper = _floor(now - LAG, 5)
         start = lo.replace(minute=0, second=0, microsecond=0)
         stamp = now.strftime("%Y%m%dT%H%M%S")
-        pred = td_span_predicate()
-        log(f"purge: {n} TD spans {lo_s[:19]} .. {hi_s[:19]} UTC; rollup range [{_sql_ts(start)}, {_sql_ts(upper)})")
+        log(f"purge: {n} {label} spans {lo_s[:19]} .. {hi_s[:19]} UTC; rollup range [{_sql_ts(start)}, {_sql_ts(upper)})")
 
         rollups, row_tables = self.views()
         has_index = bool(self.json_rows(f"SELECT name FROM system.tables WHERE database = '{DB}' "
@@ -413,8 +423,8 @@ class ClickHouse:
             log(f"purge: TD trace ids deleted from {TRACE_INDEX}")
         self.query(f"ALTER TABLE {SPANS_TABLE} DELETE WHERE {in_range} AND {td_traces}", settings=SYNC)
         self._ledger(stamp, "completed", _sql_ts(start), _sql_ts(upper), spec, has_index)
-        left = self.count_td()
-        log(f"purge: TD traces deleted from {SPANS_TABLE}; {left} TD spans remain"
+        left = self.count_td(pred)
+        log(f"purge: {label} traces deleted from {SPANS_TABLE}; {left} {label} spans remain"
             + (" (newer than the live edge; purge again later)" if left else ""))
         log(f"purge: backup kept in {BACKUP_DB} (tables *__{stamp}). To restore:")
         for q in restore:
