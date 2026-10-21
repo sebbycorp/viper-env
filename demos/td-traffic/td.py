@@ -35,7 +35,6 @@ from tdlib.spans import load_template, to_row  # noqa: E402
 from tdlib.usage import generate  # noqa: E402
 
 RATES_PATH = HERE.parents[1] / "apps/agentgateway-system/model-costs.yaml"
-MOCK_SOURCE = HERE / "mock/server.py"
 SEED = 42
 BACKFILL_DAYS = 30
 BATCH = 20_000
@@ -216,7 +215,7 @@ def cmd_up(kube: Kube, args) -> int:
         return 1
     org = build_org()
     budgets = planned_budgets(org, args.seed)
-    objs = render_all(org, budgets, MOCK_SOURCE.read_text())
+    objs = render_all(org, budgets)
     kube.apply(objs[:1])                       # namespace, so the saved values can live in it
     save_values_once(kube)
     kube.apply(objs)
@@ -224,7 +223,6 @@ def cmd_up(kube: Kube, args) -> int:
     version = kube.helm_chart_version(RELEASE, RELEASE_NS)
     kube.helm_upgrade_reuse(RELEASE, CHART, version, RELEASE_NS, DIMENSIONS_FILE)
     log(f"helm upgrade {RELEASE} {version} with {DIMENSIONS_FILE.name} (proxy picks it up in ~60s)")
-    kube.run(["rollout", "status", f"deployment/{MOCK}", "-n", NAMESPACE, "--timeout=180s"])
     warn_early_window()
     log("up: done")
     return 0
@@ -241,7 +239,7 @@ def cmd_replan_budgets(kube: Kube, args) -> int:
     """Re-apply only the budget object, with limits planned for the current window."""
     org = build_org()
     budgets = planned_budgets(org, args.seed)
-    objs = [o for o in render_all(org, budgets, MOCK_SOURCE.read_text())
+    objs = [o for o in render_all(org, budgets)
             if o["kind"] == "EnterpriseAgentgatewayBudget"]
     kube.apply(objs)
     for b in budgets:
@@ -272,6 +270,8 @@ def cmd_down(kube: Kube, args) -> int:
     else:
         restore_values(kube, saved)
     kube.delete_labeled(TD_KINDS, NAMESPACE)
+    kube.run(["delete", f"deploy/{MOCK}", f"svc/{MOCK}", f"cm/{MOCK}", "-n", NAMESPACE,
+              "--ignore-not-found"], check=False)      # v1 mock workload, if a v1 `up` left it behind
     p = kube.kubectl(["get", "namespace", NAMESPACE, "-o", "json"], check=False)
     if p.returncode == 0 and json.loads(p.stdout)["metadata"].get("labels", {}).get("demo") == "td":
         kube.run(["delete", "namespace", NAMESPACE, "--ignore-not-found", "--wait=true", "--timeout=180s"])

@@ -30,7 +30,7 @@ A laptop-run tool that fills the Solo Enterprise agentgateway UI with synthetic 
 fictional TD Bank (@td.com) AI-assistant rollout. It gives you 30 days of history in
 Cost Management, populated Budgets and Virtual Keys pages, and live traces on demo day.
 
-All calls are fake. A mock LLM runs in the cluster; nothing goes to a real provider.
+All data is synthetic. Nothing runs in the cluster and nothing is sent to a real provider; the backends are config only.
 
 ## The org at a glance
 
@@ -78,7 +78,7 @@ it unset everywhere (default 42); budgets are sized on the history that seed gen
 
 - The `budgetDimensions` Helm value of `enterprise-agentgateway`. The previous value is
   saved first and restored by `down`.
-- Namespace `td-demo` with the mock LLM, the virtual-key Secrets, the policy and the budgets.
+- Namespace `td-demo` with the virtual-key Secrets, the policy and the budgets.
 - 4 HTTPRoutes on `agentgateway-proxy` for host `td.demo.local` (one per model route).
 
 Dimension changes take about 60 s to reach the proxy. Wait before starting `live` right

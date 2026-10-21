@@ -100,6 +100,17 @@ def test_down_commands_ignore_not_found(monkeypatch):
         assert_context(argv)
 
 
+def test_down_removes_legacy_mock(monkeypatch):
+    f = FakeRun(not_found)
+    monkeypatch.setattr(kube_mod.subprocess, "run", f)
+    assert load_td().main(["down", "--context", "CTX"]) == 0
+    legacy = [a for a in f.calls if "deploy/td-mock-llm" in a]
+    assert legacy
+    for r in ("deploy/td-mock-llm", "svc/td-mock-llm", "cm/td-mock-llm"):
+        assert r in legacy[0]
+    assert "--ignore-not-found" in legacy[0] and "delete" in legacy[0] and "td-demo" in legacy[0]
+
+
 def test_preflight_reports_missing_components(monkeypatch):
     def responder(argv):
         if ("gatewayclass" in argv and "enterprise-agentgateway" in argv) or \
