@@ -23,3 +23,19 @@ def test_pyz_runs_help_and_loads_resources(tmp_path):
                            capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
         assert needle in r.stdout
+
+
+def test_single_py_runs_help_and_loads_resources(tmp_path):
+    out = tmp_path / "dist"
+    subprocess.run(["bash", str(BUILD), str(out)], check=True, capture_output=True, text=True)
+    script = out / "td-traffic.py"
+    assert script.is_file() and script.read_text().startswith("#!/usr/bin/env python3")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    shutil.copy(script, elsewhere / "td-traffic.py")
+    env = {**os.environ, "TD_TRAFFIC_CACHE": str(tmp_path / "cache")}
+    for args, needle in ((["--help"], "demo"), (["selfcheck"], "selfcheck ok")):
+        r = subprocess.run([sys.executable, "td-traffic.py", *args], cwd=elsewhere, env=env,
+                           capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        assert needle in r.stdout
