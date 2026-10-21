@@ -133,3 +133,30 @@ def to_row(req: Request, rates: dict[tuple[str, str], Rates], template: dict, cl
     sa["trace"]["id"] = trace_id
     sa["url"]["path"] = f"{req.route.route}/v1/chat/completions"
     return row
+
+
+def outcome_row(entries: dict[str, int], ts, budget_ref: str, cluster: str) -> dict:
+    """A zero-cost `agw.ai.budgets.outcome` row setting each entry's displayed spend (NOTES.md, spike).
+
+    The Budgets page takes, per entry `<budget_ref>/<entry>`, the newest `current_usage` (µUSD for USD
+    entries, tokens for Tokens entries) in `statuses`, a JSON *string*. A child span (non-empty
+    ParentSpanId) with no route / model / custom dimensions and no cost feeds no cost rollup, and
+    `server.address = td.demo.local` puts it under `td_span_predicate()` so TD purges remove it.
+    """
+    statuses = [{"id": f"{budget_ref}/{name}", "current_usage": int(v)} for name, v in entries.items()]
+    trace_id, span_id, parent = (f"{_rng.getrandbits(128):032x}", f"{_rng.getrandbits(64):016x}",
+                                 f"{_rng.getrandbits(64):016x}")
+    return {
+        "Timestamp": fmt_ts(ts), "TraceId": trace_id, "SpanId": span_id, "ParentSpanId": parent,
+        "TraceState": "", "SpanName": "agw.ai.budgets.outcome", "SpanKind": "Internal",
+        "ServiceName": "agentgateway-proxy", "ResourceAttributes": {"cluster_name": cluster},
+        "ScopeName": "agentgateway", "ScopeVersion": "",
+        "SpanAttributes": {
+            "agw": {"ai": {"budgets": {"phase": "final_debit_result",
+                                       "statuses": json.dumps(statuses, separators=(",", ":"))}}},
+            "server": {"address": HOSTNAME},
+        },
+        "Duration": 0, "StatusCode": "Unset", "StatusMessage": "",
+        "Events.Timestamp": [], "Events.Name": [], "Events.Attributes": [],
+        "Links.TraceId": [], "Links.SpanId": [], "Links.TraceState": [], "Links.Attributes": [],
+    }

@@ -185,47 +185,6 @@ class ClickHouse:
                               f"FROM {SPANS_TABLE} WHERE {pred}")
         return int(r["n"]), r["lo"], r["hi"]
 
-    # Live vs. backfilled TD spans: every live request that the gateway charged has a sibling
-    # `agw.ai.budgets.outcome` span in its trace; backfilled rows are single spans (NOTES.md).
-    _OUTCOME_TRACES = (f"(SELECT TraceId FROM {SPANS_TABLE} WHERE SpanName = 'agw.ai.budgets.outcome' "
-                       f"AND Timestamp >= toDateTime64({{lo}}, 9, 'UTC'))")
-    _TEAM = ("arrayFirst(p -> p[1] = 'team', JSONExtract(toString(SpanAttributes.`agw.llm.custom_dimensions`), "
-             "'Array(Array(String))'))[2]")
-
-    def td_history_end(self, window_start: datetime, exclude: str | None = None) -> datetime | None:
-        """Newest backfilled TD span (a successful TD LLM span without an outcome span) since window_start."""
-        lo = _q(_sql_ts(window_start - timedelta(hours=1)))
-        (r,) = self.json_rows(
-            f"SELECT toString(max(Timestamp)) AS t, count() AS n FROM {SPANS_TABLE} "
-            f"WHERE Timestamp >= toDateTime64({_q(_sql_ts(window_start))}, 9, 'UTC') AND {td_span_predicate()} "
-            + (f"AND NOT {exclude} " if exclude else "")
-            + f"AND SpanName LIKE 'POST %' AND toString(SpanAttributes.`http.response.status_code`) = '200' "
-            f"AND TraceId NOT IN {self._OUTCOME_TRACES.format(lo=lo)}")
-        return _dt(r["t"]) if int(r["n"]) else None
-
-    def td_live_spend_by_team(self, window_start: datetime, exclude: str | None = None) -> dict[str, float]:
-        """USD per team of live TD requests (traces with an outcome span) since window_start."""
-        lo = _q(_sql_ts(window_start - timedelta(hours=1)))
-        rows = self.json_rows(
-            f"SELECT {self._TEAM} AS team, toString(sum(toDecimal128OrZero(toString("
-            f"SpanAttributes.`agw.ai.usage.cost.total`), 9))) AS usd FROM {SPANS_TABLE} "
-            f"WHERE Timestamp >= toDateTime64({_q(_sql_ts(window_start))}, 9, 'UTC') AND {td_span_predicate()} "
-            + (f"AND NOT {exclude} " if exclude else "")
-            + f"AND SpanName LIKE 'POST %' AND TraceId IN {self._OUTCOME_TRACES.format(lo=lo)} GROUP BY team")
-        return {r["team"]: float(r["usd"]) for r in rows if r["team"]}
-
-    def td_live_spend_by_key(self, window_start: datetime, exclude: str | None = None) -> dict[str, float]:
-        """USD per virtual key of live TD requests (traces with an outcome span) since window_start."""
-        lo = _q(_sql_ts(window_start - timedelta(hours=1)))
-        key = self._TEAM.replace("'team'", "'virtualKey'")
-        rows = self.json_rows(
-            f"SELECT {key} AS vk, toString(sum(toDecimal128OrZero(toString("
-            f"SpanAttributes.`agw.ai.usage.cost.total`), 9))) AS usd FROM {SPANS_TABLE} "
-            f"WHERE Timestamp >= toDateTime64({_q(_sql_ts(window_start))}, 9, 'UTC') AND {td_span_predicate()} "
-            + (f"AND NOT {exclude} " if exclude else "")
-            + f"AND SpanName LIKE 'POST %' AND TraceId IN {self._OUTCOME_TRACES.format(lo=lo)} GROUP BY vk")
-        return {r["vk"]: float(r["usd"]) for r in rows if r["vk"]}
-
     def cluster_name(self, default: str) -> str:
         """`cluster_name` of the most recent real (non-TD) agentgateway-proxy span, else `default`."""
         rows = self.json_rows(
@@ -378,7 +337,7 @@ class ClickHouse:
                  predicate: str | None = None, label: str = "TD") -> dict:
         """Purge the spans matching `predicate` (default: every TD span) and their traces, safely.
 
-        A narrower predicate (e.g. budget_sync.sync_span_predicate(), the sync marker spans) runs the
+        A narrower predicate (a subset of the TD spans) runs the
         same machinery: the frozen ids, snapshot, ledger and verification all use it, and "real" totals
         are then everything else, other TD spans included.
         """

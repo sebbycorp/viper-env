@@ -64,7 +64,6 @@ def configure(release: str, namespace: str, gateway: str) -> None:
     RELEASE, RELEASE_NS = release, namespace
     manifests.GATEWAY = {"name": gateway, "namespace": namespace}
     live.GATEWAY_TARGET, live.GATEWAY_NS = f"svc/{gateway}", namespace
-    budget_sync.UI_TARGET, budget_sync.UI_NS = f"svc/{UI_SVC}", namespace
     kube_mod.HELM_RELEASE = (release, namespace)
     kube_mod.COMPONENTS = kube_mod.components(gateway, namespace)
 
@@ -252,7 +251,7 @@ def cmd_replan_budgets(kube: Kube, args) -> int:
     kube.apply(objs)
     for b in budgets:
         log(f"  {b['name']:45} {b['limit']['amount']:>8,} USD")
-    log(f"replan-budgets: applied {len(budgets)} budgets; run `sync-budgets` so the page reflects the counters")
+    log(f"replan-budgets: applied {len(budgets)} budgets; run `sync-budgets` so the page shows spend against them")
     warn_early_window()
     return 0
 
@@ -374,8 +373,9 @@ def cmd_live(kube: Kube, args) -> int:
 
 
 def cmd_sync_budgets(kube: Kube, args) -> int:
-    rows = budget_sync.run_sync(kube, build_org(), rates=load_rates(RATES_PATH), seed=args.seed, log=log,
-                                open_clickhouse=lambda: open_clickhouse(kube), dry_run=args.dry_run)
+    with open_clickhouse(kube) as ch:
+        rows = budget_sync.sync_budgets(kube, ch, build_org(), rates=load_rates(RATES_PATH), seed=args.seed,
+                                        dry_run=args.dry_run, log=log)
     print(budget_sync.format_table(rows), flush=True)
     return 0
 
@@ -409,7 +409,7 @@ def main(argv: list[str] | None = None) -> int:
         ("status", cmd_status, "count TD objects and TD span rows"),
         ("backfill", cmd_backfill, "write synthetic TD history straight into ClickHouse"),
         ("sync-budgets", cmd_sync_budgets,
-         "top up the gateway budget counters to the generated history (marker spans purged afterwards)"),
+         "set the Budgets page to the generated window spend (zero-cost outcome rows in ClickHouse)"),
         ("live", cmd_live, "send live TD traffic through the gateway (Ctrl-C stops)"),
         ("replan-budgets", cmd_replan_budgets, "re-apply only the budgets, sized for the current budget window"),
     ]:
@@ -440,7 +440,7 @@ def main(argv: list[str] | None = None) -> int:
             p.add_argument("--seed", type=int, default=None, help="random seed (default: random)")
         if name == "sync-budgets":
             p.add_argument("--seed", type=int, default=SEED, help="history seed (same as backfill)")
-            p.add_argument("--dry-run", action="store_true", help="print the plan and table; send nothing")
+            p.add_argument("--dry-run", action="store_true", help="print the targets table; write nothing")
         if name in ("backfill", "down"):
             p.add_argument("--force-new-backup", action="store_true",
                            help="purge even though an earlier purge never finished (restore that one first!)")

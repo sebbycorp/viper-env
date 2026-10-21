@@ -255,7 +255,7 @@ def test_flags_reconfigure_gateway_and_namespace():
     try:
         assert td.manifests.GATEWAY == {"name": "my-gw", "namespace": "gw-ns"}
         assert (td.live.GATEWAY_TARGET, td.live.GATEWAY_NS) == ("svc/my-gw", "gw-ns")
-        assert td.budget_sync.UI_NS == "gw-ns" and td.kube_mod.HELM_RELEASE == ("rel", "gw-ns")
+        assert td.kube_mod.HELM_RELEASE == ("rel", "gw-ns")
     finally:
         td.configure("enterprise-agentgateway", "agentgateway-system", "agentgateway-proxy")
 
