@@ -12,6 +12,7 @@ import argparse
 import base64
 import contextlib
 import json
+import shlex
 import sys
 import tempfile
 import time
@@ -101,6 +102,17 @@ def discover_clickhouse(kube: Kube, ns: str | None = None) -> tuple[str, str, st
     if not auth:
         raise KubeError(f"no *clickhouse* Secret with username/password keys in namespace {ns}")
     return ns, cands[0], auth[0]
+
+
+def restore_command_prefix(context: str, ns: str, pod: str, secret: str) -> str:
+    """Copy-paste-safe `kubectl exec ... clickhouse-client` (every value shell-quoted; credentials read from the Secret)."""
+    q = shlex.quote
+    base = f"kubectl --context {q(context)} -n {q(ns)}"
+
+    def cred(key: str) -> str:
+        return f'"$({base} get secret {q(secret)} -o jsonpath={q("{.data." + key + "}")} | base64 -d)"'
+    return (f"{base} exec -i {q(pod)} -- clickhouse-client --user {cred('username')} "
+            f"--password {cred('password')} --multiquery")
 
 
 def ui_url(kube: Kube) -> str:
@@ -282,10 +294,7 @@ def open_clickhouse(kube: Kube) -> Iterator[ClickHouse]:
     with kube.port_forward(f"pod/{pod}", ns, 8123) as port:
         ch = ClickHouse(f"http://127.0.0.1:{port}", user, pw)
         ch.restore_dir = str(Path.cwd())
-        ch.restore_cmd_prefix = (
-            f"kubectl --context {kube.context} -n {ns} exec -i {pod} -- clickhouse-client --user {user} "
-            f"--password \"$(kubectl --context {kube.context} -n {ns} get secret {secret} "
-            f"-o jsonpath='{{.data.password}}' | base64 -d)\" --multiquery")
+        ch.restore_cmd_prefix = restore_command_prefix(kube.context, ns, pod, secret)
         yield ch
 
 

@@ -292,4 +292,15 @@ def test_restore_command_is_runnable(tmp_path):
         ch.purge_td(now=NOW, log=logs.append)
     f = tmp_path / f"td-restore-{STAMP}.sql"
     assert f.exists() and "INSERT INTO platformdb.agw_cost_model_5m SELECT * FROM" in f.read_text()
-    assert any(f'clickhouse-client --multiquery < "{f}"' in m for m in logs)
+    import shlex
+    assert any(f"clickhouse-client --multiquery < {shlex.quote(str(f))}" in m for m in logs)
+
+
+def test_restore_command_prefix_is_shell_quoted():
+    import shlex
+    td = load_td()
+    cmd = td.restore_command_prefix("ctx; rm -rf ~", "my ns", "pod$(x)", "sec`y`")
+    argv = shlex.split(cmd.split(" exec -i ")[0])
+    assert argv[:5] == ["kubectl", "--context", "ctx; rm -rf ~", "-n", "my ns"]
+    assert "'ctx; rm -rf ~'" in cmd and "'pod$(x)'" in cmd and "'sec`y`'" in cmd
+    assert "--user \"$(kubectl --context 'ctx; rm -rf ~' -n 'my ns' get secret 'sec`y`'" in cmd

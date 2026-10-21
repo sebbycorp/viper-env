@@ -21,6 +21,7 @@ import base64
 import gzip
 import json
 import re
+import shlex
 import time
 import urllib.error
 import urllib.parse
@@ -343,7 +344,7 @@ class ClickHouse:
         except OSError:
             return "(could not write the restore file; run the SQL above with clickhouse-client --multiquery)"
         prefix = self.restore_cmd_prefix or "clickhouse-client --multiquery"
-        return f'{prefix} < "{path}"'
+        return f"{prefix} < {shlex.quote(path)}"
 
     @staticmethod
     def restore_sql(stamp: str, start: str, upper: str, rollups: str, trace_index) -> list[str]:
