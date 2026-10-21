@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Build the single-file TD traffic tool: <outdir>/td-traffic.pyz (default: dist/).
+# usage: scripts/build-td-traffic.sh [outdir]
+set -euo pipefail
+
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+src="$repo/demos/td-traffic"
+out="${1:-$repo/dist}"
+mkdir -p "$out"
+out="$(cd "$out" && pwd)"
+
+stage="$(mktemp -d)"
+trap 'rm -rf "$stage"' EXIT
+
+cp "$src/__main__.py" "$src/td.py" "$src/values-dimensions.yaml" "$stage/"
+cp "$repo/apps/agentgateway-system/model-costs.yaml" "$stage/"
+mkdir "$stage/tdlib"
+cp "$src"/tdlib/*.py "$src"/tdlib/*.json "$stage/tdlib/"
+
+python3 -m zipapp "$stage" -o "$out/td-traffic.pyz" -p "/usr/bin/env python3" -c
+chmod +x "$out/td-traffic.pyz"
+echo "built $out/td-traffic.pyz ($(wc -c < "$out/td-traffic.pyz" | tr -d ' ') bytes)"

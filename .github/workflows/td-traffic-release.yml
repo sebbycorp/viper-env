@@ -1,0 +1,27 @@
+name: td-traffic release
+
+on:
+  push:
+    tags: ["td-traffic-v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Test
+        run: uv run --python 3.12 --with pytest pytest demos/td-traffic/tests -q
+      - name: Build td-traffic.pyz
+        run: scripts/build-td-traffic.sh dist
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" dist/td-traffic.pyz \
+            --title "TD traffic ${TAG#td-traffic-}" \
+            --notes "Single-file TD demo traffic tool. Download td-traffic.pyz and run: python3 td-traffic.pyz demo --context <ctx>. See demos/td-traffic/README.md."
