@@ -39,3 +39,27 @@ def test_single_py_runs_help_and_loads_resources(tmp_path):
                            capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
         assert needle in r.stdout
+
+
+def _load_entry():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("td_entry", REPO / "demos" / "td-traffic" / "__main__.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_cache_root_must_be_private(tmp_path):
+    entry = _load_entry()
+    ok = tmp_path / "ok"
+    assert entry._private_root(ok) == ok and (ok.stat().st_mode & 0o777) == 0o700
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(0o777)
+    assert entry._private_root(shared) is None
+
+
+def test_no_fixed_shared_tmp_fallback():
+    for name in ("__main__.py", "single_file_stub.py"):
+        src = (REPO / "demos" / "td-traffic" / name).read_text()
+        assert "td-traffic-cache" not in src and "mkdtemp(prefix=\"td-traffic-\")" in src
