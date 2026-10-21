@@ -4,7 +4,7 @@
 # ///
 """TD Bank synthetic AI-assistant traffic for the Solo Enterprise agentgateway UI.
 
-    uv run demos/td-traffic/td.py {up,backfill,sync-budgets,live,replan-budgets,down,status} --context <kube-context>
+    td-traffic.pyz {demo,up,backfill,sync-budgets,live,replan-budgets,down,status} --context <kube-context>
 """
 from __future__ import annotations
 
@@ -34,8 +34,9 @@ from tdlib.pricing import load_rates  # noqa: E402
 from tdlib.spans import load_template, to_row  # noqa: E402
 from tdlib.usage import generate  # noqa: E402
 
-RATES_PATH = HERE.parents[1] / "apps/agentgateway-system/model-costs.yaml"
-MOCK_SOURCE = HERE / "mock/server.py"
+# The bundled copy (td-traffic.pyz) wins; in a repo checkout the catalog lives under apps/.
+RATES_PATH = next((p for p in (HERE / "model-costs.yaml", HERE.parents[1] / "apps/agentgateway-system/model-costs.yaml")
+                   if p.exists()), HERE / "model-costs.yaml")
 SEED = 42
 BACKFILL_DAYS = 30
 BATCH = 20_000
@@ -53,6 +54,7 @@ TD_KINDS = [
     "httproutes.gateway.networking.k8s.io",
     "agentgatewaybackends.agentgateway.dev",
 ]
+# deployments / services stay listed on purpose: `status` then reveals a stale v1 mock.
 STATUS_KINDS = [*TD_KINDS, "secrets", "configmaps", "deployments.apps", "services"]
 EARLY_WINDOW = timedelta(days=5)
 UI_SVC = "solo-enterprise-ui"
@@ -64,7 +66,6 @@ def configure(release: str, namespace: str, gateway: str) -> None:
     RELEASE, RELEASE_NS = release, namespace
     manifests.GATEWAY = {"name": gateway, "namespace": namespace}
     live.GATEWAY_TARGET, live.GATEWAY_NS = f"svc/{gateway}", namespace
-    budget_sync.UI_TARGET, budget_sync.UI_NS = f"svc/{UI_SVC}", namespace
     kube_mod.HELM_RELEASE = (release, namespace)
     kube_mod.COMPONENTS = kube_mod.components(gateway, namespace)
 
@@ -204,6 +205,12 @@ def restore_values(kube: Kube, saved: dict) -> None:
 
 # ---------------------------------------------------------------- subcommands
 
+def _remove_legacy_mock(kube: Kube) -> None:
+    """Delete the v1 mock workload (Deployment, Service, ConfigMap), if a v1 `up` left it behind."""
+    kube.run(["delete", f"deploy/{MOCK}", f"svc/{MOCK}", f"cm/{MOCK}", "-n", NAMESPACE,
+              "--ignore-not-found"], check=False)
+
+
 def cmd_up(kube: Kube, args) -> int:
     missing = kube.preflight()
     try:
@@ -216,15 +223,15 @@ def cmd_up(kube: Kube, args) -> int:
         return 1
     org = build_org()
     budgets = planned_budgets(org, args.seed)
-    objs = render_all(org, budgets, MOCK_SOURCE.read_text())
+    objs = render_all(org, budgets)
     kube.apply(objs[:1])                       # namespace, so the saved values can live in it
+    _remove_legacy_mock(kube)
     save_values_once(kube)
     kube.apply(objs)
     log(f"applied {len(objs)} objects ({len(org.keys)} virtual keys, {len(budgets)} budgets)")
     version = kube.helm_chart_version(RELEASE, RELEASE_NS)
     kube.helm_upgrade_reuse(RELEASE, CHART, version, RELEASE_NS, DIMENSIONS_FILE)
     log(f"helm upgrade {RELEASE} {version} with {DIMENSIONS_FILE.name} (proxy picks it up in ~60s)")
-    kube.run(["rollout", "status", f"deployment/{MOCK}", "-n", NAMESPACE, "--timeout=180s"])
     warn_early_window()
     log("up: done")
     return 0
@@ -241,12 +248,12 @@ def cmd_replan_budgets(kube: Kube, args) -> int:
     """Re-apply only the budget object, with limits planned for the current window."""
     org = build_org()
     budgets = planned_budgets(org, args.seed)
-    objs = [o for o in render_all(org, budgets, MOCK_SOURCE.read_text())
+    objs = [o for o in render_all(org, budgets)
             if o["kind"] == "EnterpriseAgentgatewayBudget"]
     kube.apply(objs)
     for b in budgets:
         log(f"  {b['name']:45} {b['limit']['amount']:>8,} USD")
-    log(f"replan-budgets: applied {len(budgets)} budgets; run `sync-budgets` so the page reflects the counters")
+    log(f"replan-budgets: applied {len(budgets)} budgets; run `sync-budgets` so the page shows spend against them")
     warn_early_window()
     return 0
 
@@ -272,6 +279,7 @@ def cmd_down(kube: Kube, args) -> int:
     else:
         restore_values(kube, saved)
     kube.delete_labeled(TD_KINDS, NAMESPACE)
+    _remove_legacy_mock(kube)
     p = kube.kubectl(["get", "namespace", NAMESPACE, "-o", "json"], check=False)
     if p.returncode == 0 and json.loads(p.stdout)["metadata"].get("labels", {}).get("demo") == "td":
         kube.run(["delete", "namespace", NAMESPACE, "--ignore-not-found", "--wait=true", "--timeout=180s"])
@@ -286,13 +294,13 @@ def cmd_down(kube: Kube, args) -> int:
 
 
 @contextlib.contextmanager
-def open_clickhouse(kube: Kube) -> Iterator[ClickHouse]:
+def open_clickhouse(kube: Kube, timeout: float = 1800.0) -> Iterator[ClickHouse]:
     """ClickHouse over a port-forward to the management ClickHouse pod, credentials from its Secret."""
     ns, pod, secret = discover_clickhouse(kube)
     sec = json.loads(kube.run(["get", "secret", secret, "-n", ns, "-o", "json"]))["data"]
     user, pw = (base64.b64decode(sec[k]).decode() for k in ("username", "password"))
     with kube.port_forward(f"pod/{pod}", ns, 8123) as port:
-        ch = ClickHouse(f"http://127.0.0.1:{port}", user, pw)
+        ch = ClickHouse(f"http://127.0.0.1:{port}", user, pw, timeout=timeout)
         ch.restore_dir = str(Path.cwd())
         ch.restore_cmd_prefix = restore_command_prefix(kube.context, ns, pod, secret)
         yield ch
@@ -360,15 +368,28 @@ def cmd_status(kube: Kube, args) -> int:
 
 def cmd_live(kube: Kube, args) -> int:
     duration = live.parse_duration(args.duration) if args.duration else None
-    stats = live.run_live(kube, build_org(), speed=args.speed, min_rpm=args.min_rpm, concurrency=args.concurrency,
-                          duration=duration, rates=load_rates(RATES_PATH), seed=args.seed, log=log)
+    stats = live.run_live(kube, build_org(), speed=args.speed, min_rpm=args.min_rpm, duration=duration,
+                          ch_factory=lambda: open_clickhouse(kube, timeout=live.CH_TIMEOUT_S), rates=load_rates(RATES_PATH), seed=args.seed,
+                          log=log)
     log("live: clients " + ", ".join(f"{k}={v}" for k, v in sorted(stats.clients.items())))
-    return 0 if stats.sent and not stats.failed else (0 if stats.interrupted else 1)
+    return 0
+
+
+def cmd_selfcheck() -> int:
+    """Load every bundled resource (rates catalog, builtin rates, span template, dimensions); exit 0 if all are there."""
+    rates = load_rates(RATES_PATH)
+    template = load_template()
+    dims = DIMENSIONS_FILE.read_text()
+    assert rates and template["SpanName"] is not None and "budgetDimensions" in dims
+    assert len(build_org().keys) > 0
+    print(f"td-traffic selfcheck ok: {len(rates)} rates, span template, dimensions ({DIMENSIONS_FILE.name})")
+    return 0
 
 
 def cmd_sync_budgets(kube: Kube, args) -> int:
-    rows = budget_sync.run_sync(kube, build_org(), rates=load_rates(RATES_PATH), seed=args.seed, log=log,
-                                open_clickhouse=lambda: open_clickhouse(kube), dry_run=args.dry_run)
+    with open_clickhouse(kube) as ch:
+        rows = budget_sync.sync_budgets(kube, ch, build_org(), rates=load_rates(RATES_PATH), seed=args.seed,
+                                        dry_run=args.dry_run, log=log)
     print(budget_sync.format_table(rows), flush=True)
     return 0
 
@@ -387,14 +408,15 @@ def cmd_demo(kube: Kube, args) -> int:
         return rc
     log("demo: ready.")
     log(f"  Solo UI:   {ui_url(kube)}")
-    log(f"  next:      uv run td.py live --context {kube.context}   (Ctrl-C stops)")
-    log(f"  cleanup:   uv run td.py down --purge-history --context {kube.context}")
+    log(f"  next:      uv run --python 3.12 python td-traffic.pyz live --context {kube.context}   (Ctrl-C stops)")
+    log(f"  cleanup:   uv run --python 3.12 python td-traffic.pyz down --purge-history --context {kube.context}")
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="td.py", description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(prog="td-traffic", description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("selfcheck", help=argparse.SUPPRESS)      # hidden: packaging smoke test
     for name, fn, hlp in [
         ("demo", cmd_demo, "one shot: preflight, up, backfill --replace, sync-budgets; prints the UI URL"),
         ("up", cmd_up, "create the TD demo objects, keys, budgets and dimensions"),
@@ -402,8 +424,8 @@ def main(argv: list[str] | None = None) -> int:
         ("status", cmd_status, "count TD objects and TD span rows"),
         ("backfill", cmd_backfill, "write synthetic TD history straight into ClickHouse"),
         ("sync-budgets", cmd_sync_budgets,
-         "top up the gateway budget counters to the generated history (marker spans purged afterwards)"),
-        ("live", cmd_live, "send live TD traffic through the gateway (Ctrl-C stops)"),
+         "set the Budgets page to the generated window spend (zero-cost outcome rows in ClickHouse)"),
+        ("live", cmd_live, "keep writing fresh TD spans into ClickHouse and nudging the budgets (Ctrl-C stops)"),
         ("replan-budgets", cmd_replan_budgets, "re-apply only the budgets, sized for the current budget window"),
     ]:
         p = sub.add_parser(name, help=hlp)
@@ -429,11 +451,10 @@ def main(argv: list[str] | None = None) -> int:
             p.add_argument("--duration", help="how long to run, e.g. 90s, 10m, 1h (default: until Ctrl-C)")
             p.add_argument("--speed", type=float, default=1.0, help="rate multiplier on the usage model (default 1)")
             p.add_argument("--min-rpm", type=float, default=6.0, help="floor in requests/minute (default 6)")
-            p.add_argument("--concurrency", type=int, default=4, help="parallel senders (default 4)")
             p.add_argument("--seed", type=int, default=None, help="random seed (default: random)")
         if name == "sync-budgets":
             p.add_argument("--seed", type=int, default=SEED, help="history seed (same as backfill)")
-            p.add_argument("--dry-run", action="store_true", help="print the plan and table; send nothing")
+            p.add_argument("--dry-run", action="store_true", help="print the targets table; write nothing")
         if name in ("backfill", "down"):
             p.add_argument("--force-new-backup", action="store_true",
                            help="purge even though an earlier purge never finished (restore that one first!)")
@@ -442,6 +463,8 @@ def main(argv: list[str] | None = None) -> int:
                            help="also delete every TD span from ClickHouse and recompute the affected rollups "
                                 "(rollups are snapshotted to td_purge_backup first)")
     args = ap.parse_args(argv)
+    if args.cmd == "selfcheck":
+        return cmd_selfcheck()
     configure(args.release, args.namespace, args.gateway)
     try:
         return args.fn(Kube(args.context), args)

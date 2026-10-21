@@ -241,7 +241,7 @@ def test_purge_noop_when_no_td_rows():
 def test_insert_rows_batches(monkeypatch):
     ch = ClickHouse("http://x", "u", "p")
     sent = []
-    monkeypatch.setattr(ch, "_insert_batch", lambda table, lines: sent.append(len(lines)))
+    monkeypatch.setattr(ch, "_insert_batch", lambda table, lines, attempts=8: sent.append(len(lines)))
     n = ch.insert_rows("platformdb.otel_traces_json", ({"i": i} for i in range(45)), batch=20)
     assert n == 45 and sent == [20, 20, 5]
 

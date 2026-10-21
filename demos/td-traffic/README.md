@@ -1,36 +1,58 @@
 # TD Bank demo traffic for the agentgateway UI
 
-## Quickstart
+A single-file tool that fills the Solo Enterprise agentgateway UI with synthetic usage from a
+fictional TD Bank (@td.com) AI-assistant rollout: 30 days of history in Cost Management,
+populated Budgets and Virtual Keys pages, and fresh traces on demo day. All data is synthetic.
+Nothing runs in the cluster beyond config, and nothing is sent to a provider: spans are written
+straight into the Solo UI's ClickHouse.
 
-Prerequisites: [`uv`](https://docs.astral.sh/uv/), `kubectl`, `helm`, and a Kubernetes cluster
-running Solo Enterprise for agentgateway (a Gateway, default `agentgateway-proxy`) and the
-Solo UI (management chart, with its ClickHouse).
+## Quickstart (run it locally)
+
+Prerequisites on your laptop:
+
+- Python 3.11+ (or [`uv`](https://docs.astral.sh/uv/)), `kubectl` and `helm` on the PATH.
+- A kube context for a cluster that runs Solo Enterprise agentgateway (a Gateway, default
+  `agentgateway-proxy`) and the Solo UI (management chart, with its ClickHouse).
+
+Download the tool (the repo is private, so use `gh` with repo access):
 
 ```bash
-git clone https://github.com/sebbycorp/viper-env && cd viper-env/demos/td-traffic
-uv run td.py demo --context <ctx>     # preflight, up, 30-day backfill, budget sync (~15 min)
-uv run td.py live --context <ctx>     # live traffic until Ctrl-C
+gh release download -R sebbycorp/viper-env --pattern td-traffic.pyz
+# if the repo is public, this works too:
+# curl -fLO https://github.com/sebbycorp/viper-env/releases/latest/download/td-traffic.pyz
 ```
 
-`demo` ends by printing the Solo UI address (LoadBalancer / NodePort, or a `kubectl
-port-forward` command). Open it and look at Cost Management, Budgets, Virtual Keys and
-Traces.
+Run it. This form works on stock macOS (its `python3` is 3.9):
 
-Cleanup: `uv run td.py down --purge-history --context <ctx>`
+```bash
+uv run --python 3.12 python td-traffic.pyz demo   --context <ctx>   # one-time setup, ~10 min, then it exits
+uv run --python 3.12 python td-traffic.pyz live   --context <ctx>   # keeps running until Ctrl-C
+uv run --python 3.12 python td-traffic.pyz status --context <ctx>   # object and span counts, budget window
+uv run --python 3.12 python td-traffic.pyz down --purge-history --context <ctx>   # remove everything
+```
 
-If your release, namespace or Gateway names differ, pass `--release`, `--namespace` (where
-the agentgateway release, Gateway, Solo UI and ClickHouse live) and `--gateway` to every
-command. The ClickHouse pod and its auth Secret are found by the name pattern `*clickhouse*`
-in that namespace. If something is missing, `demo` / `up` say exactly what and what to install,
-and change nothing.
+With Python 3.11+ installed, `python3 td-traffic.pyz <command> --context <ctx>` does the same.
 
----
+- `demo` is the one-time setup: it creates the config (keys, budgets, routes, dimensions), writes
+  30 days of history into ClickHouse, and sets the Budgets page. It prints the Solo UI address
+  and exits. Run it once per cluster (it replaces any earlier TD history).
+- `live` runs until Ctrl-C (or `--duration 2h`). Every few seconds it writes fresh spans into
+  ClickHouse, and about every minute it nudges the budgets, so the Traces, Cost Management and
+  Budgets pages keep moving. Start it about 10 minutes before the demo. Stop `live` (Ctrl-C) before running `demo`,
+  `backfill --replace` or `down`.
+- Every command needs `--context <ctx>`; the current context is never used. The first run unpacks the tool to
+  `~/.cache/td-traffic/` (set `TD_TRAFFIC_CACHE` to change it).
 
-A laptop-run tool that fills the Solo Enterprise agentgateway UI with synthetic usage from a
-fictional TD Bank (@td.com) AI-assistant rollout. It gives you 30 days of history in
-Cost Management, populated Budgets and Virtual Keys pages, and live traces on demo day.
+If your release, namespace or Gateway names differ, pass `--release`, `--namespace` (where the
+agentgateway release, Gateway, Solo UI and ClickHouse live) and `--gateway` to every command. The
+ClickHouse pod and its auth Secret are found by the name pattern `*clickhouse*` in that
+namespace. If something is missing, `demo` / `up` say exactly what and what to install, and
+change nothing.
 
-All calls are fake. A mock LLM runs in the cluster; nothing goes to a real provider.
+From source: `git clone https://github.com/sebbycorp/viper-env && cd viper-env`, then
+`uv run demos/td-traffic/td.py <command> --context <ctx>`. Build the single file with
+`scripts/build-td-traffic.sh` (writes `dist/td-traffic.pyz`). Pushing a tag `td-traffic-v*`
+publishes it as a GitHub release.
 
 ## The org at a glance
 
@@ -43,46 +65,30 @@ All calls are fake. A mock LLM runs in the cluster; nothing goes to a real provi
   Risk & Compliance. Users, projects and teams are generated from a fixed seed, so the
   org is the same on every run.
 
-## Prerequisites
-
-- `uv` (Python and dependencies are handled by the `uv run` script header).
-- `kubectl` and `helm` on the PATH.
-- A kube context for a cluster that runs enterprise agentgateway (Gateway
-  `agentgateway-proxy` by default) and the Solo UI with ClickHouse.
-- Every command needs `--context <ctx>`; the current context is never used.
-
-```bash
-CTX=<your kube context>
-uv run demos/td-traffic/td.py <command> --context $CTX
-```
-
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `demo [--days 30] [--seed N]` | One shot: preflight, `up`, `backfill --replace`, `sync-budgets`; prints the UI URL and the `live` command. |
+| `demo [--days 30] [--seed N]` | One-time setup: preflight, `up`, `backfill --replace`, `sync-budgets`; prints the UI URL and the `live` command. |
 | `up [--seed N]` | Creates the demo objects, keys, budgets and dimensions (see below). |
 | `backfill [--days 30] [--replace] [--seed N] [--batch N] [--force-new-backup]` | Writes synthetic history straight into ClickHouse. Refuses if TD history exists; `--replace` purges it first. |
-| `sync-budgets [--dry-run] [--seed N]` | Tops the gateway budget counters up to the backfilled history, then removes its marker spans. Idempotent. `--dry-run` prints the plan and sends nothing. |
+| `sync-budgets [--dry-run] [--seed N]` | Sets the Budgets page to the generated window spend (zero-cost outcome rows in ClickHouse), then reads it back the way the page does. `--dry-run` prints the targets and writes nothing. |
 | `replan-budgets [--seed N]` | Re-applies only the budgets, sized for the current budget window. |
-| `live [--duration D] [--speed X] [--min-rpm 6] [--concurrency 4] [--seed N]` | Sends real requests through the gateway with TD keys. Runs until Ctrl-C unless `--duration` is set. |
+| `live [--duration D] [--speed X] [--min-rpm 6] [--seed N]` | Writes fresh spans into ClickHouse and refreshes the budgets about every minute. Runs until Ctrl-C unless `--duration` (e.g. `90s`, `10m`, `2h`) is set. |
 | `status` | Counts TD objects and span rows; prints the budget window and next rollover. |
 | `down [--purge-history] [--force-new-backup]` | Removes the demo. |
 
-All commands also take `--namespace`, `--release` and `--gateway` (see Quickstart).
-`--seed`: use the same seed for `up`, `backfill`, `sync-budgets` and `replan-budgets`, or leave
-it unset everywhere (default 42); budgets are sized on the history that seed generates.
-`live` runs until Ctrl-C; `--duration` (e.g. `90s`, `10m`, `2h`) stops it earlier.
+All commands also take `--namespace`, `--release` and `--gateway`. `--seed`: use the same seed
+for `demo` / `up`, `backfill`, `sync-budgets` and `replan-budgets`, or leave it unset everywhere
+(default 42); budgets are sized on the history that seed generates.
 
 ### What `up` changes on the cluster
 
 - The `budgetDimensions` Helm value of `enterprise-agentgateway`. The previous value is
   saved first and restored by `down`.
-- Namespace `td-demo` with the mock LLM, the virtual-key Secrets, the policy and the budgets.
-- 4 HTTPRoutes on `agentgateway-proxy` for host `td.demo.local` (one per model route).
-
-Dimension changes take about 60 s to reach the proxy. Wait before starting `live` right
-after `up`.
+- Namespace `td-demo` with the virtual-key Secrets, the policy and the budgets.
+- 4 HTTPRoutes on `agentgateway-proxy` for host `td.demo.local` (one per model route) and
+  their backends (config only).
 
 ### `down` versus `down --purge-history`
 
@@ -94,53 +100,38 @@ after `up`.
 
 ## Demo-day checklist
 
-Order matters. Do not run `sync-budgets` while `live` is running.
-
-1. `up` (or `replan-budgets` if the demo is already up and only the window moved).
-2. `backfill --replace`. About 5 minutes for 30 days.
-3. `sync-budgets`. About 6 minutes (it waits for a rollup bucket to close before its purge).
-4. `live`, started 10 minutes before the call (`--duration 2h`, or Ctrl-C afterwards).
-5. `status`, to confirm counts and the next budget rollover.
-6. Pages to show:
-   - Cost Management, drill down by group, team, project, user, client and model.
-   - Budgets, with the mix of over, near and under teams.
-   - Virtual Keys, with per-user and per-team keys.
-   - Traces, from the live traffic.
+1. `demo` once, ahead of time (or `replan-budgets` + `sync-budgets` if only the budget window moved).
+2. `live`, started 10 minutes before the call (`--duration 2h`, or Ctrl-C afterwards).
+3. `status`, to confirm counts and the next budget rollover.
+4. Pages to show: Cost Management (drill down by group, team, project, user, client and
+   model), Budgets (a mix of over, near and under teams), Virtual Keys (per-user and
+   per-team keys), Traces (the live spans).
 
 ## Budgets
 
-- The Budgets page shows the gateway's live counters, not ClickHouse history. `sync-budgets`
-  charges the counters up to the backfilled spend, so run it after every backfill.
+- The Budgets page reads zero-cost `agw.ai.budgets.outcome` rows from ClickHouse, not the
+  gateway's Redis counters. `sync-budgets` (and `live`, every minute) write those rows. Details
+  in [NOTES.md](NOTES.md).
 - Budgets use an epoch-aligned 30-day window, not the calendar month. `status` prints the
   next rollover. After it, re-run `replan-budgets` (or `up`), `backfill --replace` and
   `sync-budgets`.
-- Re-running `sync-budgets` is safe: a second run sends 0 marker requests.
-- 41 Audit budgets (Audit only: nothing is ever blocked):
-  - monthly USD: 1 org, 5 groups, 15 teams (2 over, 2 near, the rest under), 12 projects
-    (at least 1 over and 1 near), and the top 5 spenders by user (at least 1 near);
-    groups and the org sit at about 60-90%;
-  - daily Tokens: the 3 biggest teams. `sync-budgets` re-sizes them on today's counter
-    (its catch-up requests charge tokens too) so they sit at 50-90%.
-- Entry names are part of the gateway's counter key. Every entry a request charges must start
-  from the same counter state, so the org / group / team entries are named `*-month-usd`.
-  The older `*-monthly-usd` counters are left unused and expire with their window.
-- `sync-budgets` closes the gap per virtual key (each team's gap split by its keys' share), so
-  team, group, org, project and user counters all line up with the generated history.
+- 41 Audit budgets (Audit only: nothing is ever blocked): monthly USD for 1 org, 5 groups,
+  15 teams (2 over, 2 near, the rest under), 12 projects and the top 5 users; daily Tokens for
+  the 3 biggest teams.
 - **Early in a budget window** (less than 5 days since it started) the window-to-date spend is
-  small, so the limits look small too. `up`, `replan-budgets` and `status` warn about it. Wait,
-  or re-run `replan-budgets` and `sync-budgets` a few days later.
+  small, so the limits look small too. `up`, `replan-budgets` and `status` warn about it.
 
 ## Known limits
 
-- Fake calls only. TD routes answer only when the request carries Host `td.demo.local`.
+- The Playground and the TD routes do not answer: the routes exist for the UI's config pages,
+  and the backends are config only, so nothing is sent to a provider.
+- The Redis budget counters in the gateway differ from the Budgets page (the page reads
+  ClickHouse; the tool never charges the counters).
 - The UI error rate shows 0% for TD traffic (a platform quirk), even though 429s and 5xx
   appear in the traces.
 - Azure and Mistral prices come from the proxy's built-in price catalog.
-- A proxy restart mid-`live` can drop one in-flight request. The tool reconnects and
-  re-sends. Budget counters survive a proxy restart.
-- Every purge (`down --purge-history`, `backfill --replace`, the `sync-budgets` marker
-  purge) removes budget outcome spans, so the Budgets page can look stale or empty until
-  the next request per team. `sync-budgets` sends those requests itself.
+- If the ClickHouse port-forward drops, `live` re-opens it (backoff 1 to 30 s) and retries the
+  rows it has not inserted.
 - Each purge adds snapshot tables to `td_purge_backup` in ClickHouse. It grows over time.
   Drop it when you no longer need to restore: `DROP DATABASE td_purge_backup`
   (the purge prints this statement). This is safe only when no purge is incomplete (a
@@ -148,7 +139,7 @@ Order matters. Do not run `sync-budgets` while `live` is running.
 
 ### Recovery
 
-If a sync's marker purge fails, or a purge is blocked with `PurgeIncompleteError`, the tool
+If a purge fails, or is blocked with `PurgeIncompleteError`, the tool
 prints the restore SQL for that purge, writes it to `td-restore-<stamp>.sql` in the current
 directory, and prints a ready-to-run command, for example:
 
@@ -171,8 +162,8 @@ recovery commands.
 ## Cleanup
 
 ```bash
-uv run demos/td-traffic/td.py down --context $CTX                  # keep history
-uv run demos/td-traffic/td.py down --context $CTX --purge-history  # remove everything
+uv run --python 3.12 python td-traffic.pyz down --context <ctx>                  # keep history
+uv run --python 3.12 python td-traffic.pyz down --context <ctx> --purge-history  # remove everything
 ```
 
 Platform details and verified behavior are in [NOTES.md](NOTES.md). Tests:

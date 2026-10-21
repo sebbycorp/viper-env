@@ -100,6 +100,34 @@ def test_down_commands_ignore_not_found(monkeypatch):
         assert_context(argv)
 
 
+def test_down_removes_legacy_mock(monkeypatch):
+    f = FakeRun(not_found)
+    monkeypatch.setattr(kube_mod.subprocess, "run", f)
+    assert load_td().main(["down", "--context", "CTX"]) == 0
+    legacy = [a for a in f.calls if "deploy/td-mock-llm" in a]
+    assert legacy
+    for r in ("deploy/td-mock-llm", "svc/td-mock-llm", "cm/td-mock-llm"):
+        assert r in legacy[0]
+    assert "--ignore-not-found" in legacy[0] and "delete" in legacy[0] and "td-demo" in legacy[0]
+
+
+def test_up_removes_legacy_mock(monkeypatch):
+    f = FakeRun(lambda argv: (0, "", ""))
+    monkeypatch.setattr(kube_mod.subprocess, "run", f)
+    td = load_td()
+    monkeypatch.setattr(Kube, "preflight", lambda self: [])
+    monkeypatch.setattr(Kube, "helm_chart_version", lambda self, *a: "v1")
+    monkeypatch.setattr(Kube, "helm_upgrade_reuse", lambda self, *a: None)
+    monkeypatch.setattr(td, "discover_clickhouse", lambda kube: ("ns", "pod", "sec"))
+    monkeypatch.setattr(td, "save_values_once", lambda kube: None)
+    monkeypatch.setattr(td, "warn_early_window", lambda: None)
+    assert td.main(["up", "--context", "CTX"]) == 0
+    legacy = [a for a in f.calls if "deploy/td-mock-llm" in a]
+    assert legacy and "--ignore-not-found" in legacy[0]
+    for r in ("svc/td-mock-llm", "cm/td-mock-llm"):
+        assert r in legacy[0]
+
+
 def test_preflight_reports_missing_components(monkeypatch):
     def responder(argv):
         if ("gatewayclass" in argv and "enterprise-agentgateway" in argv) or \
@@ -227,7 +255,7 @@ def test_flags_reconfigure_gateway_and_namespace():
     try:
         assert td.manifests.GATEWAY == {"name": "my-gw", "namespace": "gw-ns"}
         assert (td.live.GATEWAY_TARGET, td.live.GATEWAY_NS) == ("svc/my-gw", "gw-ns")
-        assert td.budget_sync.UI_NS == "gw-ns" and td.kube_mod.HELM_RELEASE == ("rel", "gw-ns")
+        assert td.kube_mod.HELM_RELEASE == ("rel", "gw-ns")
     finally:
         td.configure("enterprise-agentgateway", "agentgateway-system", "agentgateway-proxy")
 

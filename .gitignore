@@ -60,3 +60,6 @@ secrets.yml
 *.swp
 *.swo
 *~
+
+# td-traffic build output
+dist/

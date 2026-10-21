@@ -39,7 +39,7 @@ def budgets(org, rates):
 
 @pytest.fixture(scope="module")
 def objs(org, budgets):
-    return render_all(org, budgets, (ROOT / "mock/server.py").read_text())
+    return render_all(org, budgets)
 
 
 def kind(objs, k):
@@ -68,10 +68,26 @@ def test_backends_match_notes(objs):
     bes = {b["metadata"]["name"]: b for b in kind(objs, "AgentgatewayBackend")}
     assert sorted(bes) == sorted(MODELS)
     for rid, m in MODELS.items():
-        c = bes[rid]["spec"]["ai"]["provider"]["custom"]
+        prov = bes[rid]["spec"]["ai"]["provider"]
+        c = prov["custom"]
         assert c["providerOverride"] == m.provider and c["model"] == m.model
         assert c["formats"] == [{"type": "Completions"}]
-        assert c["backendRef"] == {"name": "td-mock-llm", "port": 8080}
+        assert prov["port"] == 443
+
+
+def test_no_workloads_rendered(objs):
+    bad = {"Deployment", "Pod", "Job", "StatefulSet", "DaemonSet", "Service", "ConfigMap"}
+    assert not [o["kind"] for o in objs if o["kind"] in bad]
+
+
+def test_backends_point_at_provider_hosts(objs):
+    domains = ("openai.azure.com", "amazonaws.com", "mistral.ai")
+    for b in kind(objs, "AgentgatewayBackend"):
+        prov = b["spec"]["ai"]["provider"]
+        assert "backendRef" not in prov["custom"] and "svc.cluster.local" not in json.dumps(b["spec"])
+        assert prov["host"].endswith(domains) and "." in prov["host"]
+        if prov["host"].endswith("openai.azure.com"):
+            assert "placeholder" in prov["host"]
 
 
 def test_policy_targets_every_route(objs):
@@ -168,14 +184,6 @@ def test_projection_is_consistent(org, projection):
     assert abs(sum(projection["team"].values()) - total) < 1e-6
     assert abs(sum(projection["group"].values()) - total) < 1e-6
     assert set(projection["team"]) == set(org.teams)
-
-
-def test_mock_pod_requests_small(objs):
-    (dep,) = kind(objs, "Deployment")
-    (c,) = dep["spec"]["template"]["spec"]["containers"]
-    assert c["resources"]["requests"] == {"cpu": "25m", "memory": "64Mi"}
-    (cm,) = [o for o in kind(objs, "ConfigMap") if o["metadata"]["name"] == "td-mock-llm"]
-    assert "ThreadingHTTPServer" in cm["data"]["server.py"]
 
 
 def test_keys_secret_contains_all_keys(org, objs):

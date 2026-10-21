@@ -1,7 +1,6 @@
 """Kubernetes objects for the TD demo (NOTES.md is the source of truth for every shape here)."""
 from __future__ import annotations
 
-import hashlib
 import json
 import random
 from collections import defaultdict
@@ -19,7 +18,12 @@ NAMESPACE = "td-demo"
 LABELS = {"demo": "td"}
 HOSTNAME = "td.demo.local"
 GATEWAY = {"name": "agentgateway-proxy", "namespace": "agentgateway-system"}
-MOCK = "td-mock-llm"
+MOCK = "td-mock-llm"                    # v1 mock workload; only `down` still names it (legacy cleanup)
+# Public provider API hosts the backends point at. Nothing is ever sent there: v2 writes spans straight to
+# ClickHouse, so the backends only have to exist and be Accepted (no auth secrets needed).
+PROVIDER_HOSTS = {"azure": "td-demo-placeholder.openai.azure.com",
+                  "aws.bedrock": "bedrock-runtime.us-east-1.amazonaws.com",
+                  "mistral": "api.mistral.ai"}
 KEYS_SECRET = "td-virtual-keys"
 POLICY = "td-apikey"
 BUDGET = "td-budgets"
@@ -243,49 +247,14 @@ def _key_entry(org: Org, k) -> str:
     return json.dumps({"key": k.secret, "keyHash": None, "metadata": md}, separators=(",", ":"))
 
 
-def _mock(mock_source: str) -> list[dict]:
-    digest = hashlib.sha256(mock_source.encode()).hexdigest()[:16]
-    pod_labels = {**LABELS, "app": MOCK}
-    return [
-        {"apiVersion": "v1", "kind": "ConfigMap", "metadata": _meta(MOCK), "data": {"server.py": mock_source}},
-        {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": _meta(MOCK, app=MOCK), "spec": {
-            "replicas": 1,
-            "selector": {"matchLabels": {"app": MOCK}},
-            "template": {
-                "metadata": {"labels": pod_labels, "annotations": {"td.demo/server-sha": digest}},
-                "spec": {
-                    "securityContext": {"runAsNonRoot": True, "runAsUser": 65534,
-                                        "seccompProfile": {"type": "RuntimeDefault"}},
-                    "containers": [{
-                        "name": "mock", "image": "python:3.12-slim",
-                        "command": ["python", "-u", "/app/server.py"],
-                        "env": [{"name": "PORT", "value": "8080"},
-                                {"name": "PYTHONDONTWRITEBYTECODE", "value": "1"}],
-                        "ports": [{"containerPort": 8080, "name": "http"}],
-                        "resources": {"requests": {"cpu": "25m", "memory": "64Mi"},
-                                      "limits": {"memory": "128Mi"}},
-                        "readinessProbe": {"httpGet": {"path": "/", "port": 8080}, "periodSeconds": 5},
-                        "securityContext": {"allowPrivilegeEscalation": False,
-                                            "capabilities": {"drop": ["ALL"]}},
-                        "volumeMounts": [{"name": "code", "mountPath": "/app"}],
-                    }],
-                    "volumes": [{"name": "code", "configMap": {"name": MOCK}}],
-                },
-            },
-        }},
-        {"apiVersion": "v1", "kind": "Service", "metadata": _meta(MOCK), "spec": {
-            "selector": {"app": MOCK}, "ports": [{"name": "http", "port": 8080, "targetPort": 8080}]}},
-    ]
-
-
 def _route_objs() -> list[dict]:
     out = []
     for rid, m in MODELS.items():
         out.append({"apiVersion": "agentgateway.dev/v1alpha1", "kind": "AgentgatewayBackend",
                     "metadata": _meta(rid), "spec": {"ai": {"provider": {"custom": {
                         "providerOverride": m.provider, "model": m.model,
-                        "formats": [{"type": "Completions"}],
-                        "backendRef": {"name": MOCK, "port": 8080}}}}}})
+                        "formats": [{"type": "Completions"}]},
+                        "host": PROVIDER_HOSTS[m.provider], "port": 443}}}})
         out.append({"apiVersion": "gateway.networking.k8s.io/v1", "kind": "HTTPRoute",
                     "metadata": _meta(rid), "spec": {
                         "parentRefs": [dict(GATEWAY)], "hostnames": [HOSTNAME],
@@ -295,11 +264,10 @@ def _route_objs() -> list[dict]:
     return out
 
 
-def render_all(org: Org, budgets: list[dict], mock_source: str) -> list[dict]:
+def render_all(org: Org, budgets: list[dict]) -> list[dict]:
     """Every TD object, in apply order (namespace first). All labeled demo=td, all in td-demo."""
     return [
         {"apiVersion": "v1", "kind": "Namespace", "metadata": _meta(NAMESPACE, namespace=None)},
-        *_mock(mock_source),
         *_route_objs(),
         {"apiVersion": "v1", "kind": "Secret", "metadata": _meta(KEYS_SECRET), "type": "Opaque",
          "stringData": {k.id: _key_entry(org, k) for k in org.keys}},
