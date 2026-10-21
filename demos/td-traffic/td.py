@@ -27,7 +27,7 @@ from tdlib import budget_sync, kube as kube_mod, live, manifests  # noqa: E402
 from tdlib.clickhouse import SPANS_TABLE, ClickHouse, ClickHouseError  # noqa: E402
 from tdlib.kube import Kube, KubeError  # noqa: E402
 from tdlib.manifests import (  # noqa: E402
-    DIMENSIONS_FILE, LABELS, MOCK, NAMESPACE, budget_window, plan_budgets, render_all,
+    DIMENSIONS_FILE, LABELS, MOCK, NAMESPACE, Caps, budget_window, caps_from_schemas, plan_budgets, render_all,
 )
 from tdlib.org import build_org  # noqa: E402
 from tdlib.pricing import load_rates  # noqa: E402
@@ -211,6 +211,27 @@ def _remove_legacy_mock(kube: Kube) -> None:
               "--ignore-not-found"], check=False)
 
 
+BACKEND_CRD = "agentgatewaybackends.agentgateway.dev"
+POLICY_CRD = "enterpriseagentgatewaypolicies.enterpriseagentgateway.solo.io"
+BUDGET_CRD = "enterpriseagentgatewaybudgets.enterpriseagentgateway.solo.io"
+
+
+def cluster_caps(kube: Kube) -> Caps:
+    """What this cluster's agentgateway accepts; logs anything an older release forces us to leave out."""
+    caps = caps_from_schemas(kube.crd_spec_schema(BACKEND_CRD), kube.crd_spec_schema(POLICY_CRD),
+                             kube.crd_spec_schema(BUDGET_CRD))
+    if caps.backend == "openai":
+        log("older agentgateway: backends have no custom providerOverride; using openai-type backends "
+            "(provider labels in the data are unaffected)")
+    elif caps.backend == "none":
+        log("older agentgateway: no usable AI backend type; skipping TD backends, routes and policy")
+    if not caps.budgets:
+        log("older agentgateway: EnterpriseAgentgatewayBudget CRD not installed; skipping budgets")
+    elif not caps.budget_enforcement:
+        log("older agentgateway: policy has no entBudgetEnforcement; budgets are applied without enforcement")
+    return caps
+
+
 def cmd_up(kube: Kube, args) -> int:
     missing = kube.preflight()
     try:
@@ -222,8 +243,9 @@ def cmd_up(kube: Kube, args) -> int:
         log("nothing changed")
         return 1
     org = build_org()
-    budgets = planned_budgets(org, args.seed)
-    objs = render_all(org, budgets)
+    caps = cluster_caps(kube)
+    budgets = planned_budgets(org, args.seed) if caps.budgets else []
+    objs = render_all(org, budgets, caps)
     kube.apply(objs[:1])                       # namespace, so the saved values can live in it
     _remove_legacy_mock(kube)
     save_values_once(kube)
@@ -247,8 +269,12 @@ def planned_budgets(org, seed: int) -> list[dict]:
 def cmd_replan_budgets(kube: Kube, args) -> int:
     """Re-apply only the budget object, with limits planned for the current window."""
     org = build_org()
+    caps = cluster_caps(kube)
+    if not caps.budgets:
+        log("replan-budgets: nothing to do (no budget CRD on this cluster)")
+        return 0
     budgets = planned_budgets(org, args.seed)
-    objs = [o for o in render_all(org, budgets)
+    objs = [o for o in render_all(org, budgets, caps)
             if o["kind"] == "EnterpriseAgentgatewayBudget"]
     kube.apply(objs)
     for b in budgets:
@@ -387,6 +413,9 @@ def cmd_selfcheck() -> int:
 
 
 def cmd_sync_budgets(kube: Kube, args) -> int:
+    if kube.crd_spec_schema(BUDGET_CRD) is None:
+        log("sync-budgets: skipped (no EnterpriseAgentgatewayBudget CRD on this cluster)")
+        return 0
     with open_clickhouse(kube) as ch:
         rows = budget_sync.sync_budgets(kube, ch, build_org(), rates=load_rates(RATES_PATH), seed=args.seed,
                                         dry_run=args.dry_run, log=log)

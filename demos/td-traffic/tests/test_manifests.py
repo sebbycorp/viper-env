@@ -225,3 +225,43 @@ def test_dimension_values_file_in_sync():
     for dim in ("organization", "group", "team", "user", "project", "client", "virtualKey"):
         assert f"id: {dim}" in text
     assert "apiKey.custom.team" in text and "apiKey.custom.project" in text
+
+
+# --- older agentgateway CRDs ------------------------------------------------------------------------
+from tdlib.manifests import Caps, caps_from_schemas  # noqa: E402
+
+
+def _schema(props: dict) -> dict:
+    return {"properties": props}
+
+
+NEW_BACKEND = _schema({"ai": _schema({"provider": _schema({
+    "custom": _schema({"providerOverride": {}, "model": {}}), "openai": _schema({"model": {}}), "host": {}, "port": {}})})})
+OLD_BACKEND = _schema({"ai": _schema({"provider": _schema({
+    "custom": _schema({"backendRef": {}, "formats": {}}), "openai": _schema({"model": {}}), "host": {}, "port": {}})})})
+NEW_POLICY = _schema({"traffic": _schema({"apiKeyAuthentication": {}, "entBudgetEnforcement": {}})})
+OLD_POLICY = _schema({"traffic": _schema({"apiKeyAuthentication": {}})})
+
+
+def test_caps_new_cluster_is_full():
+    assert caps_from_schemas(NEW_BACKEND, NEW_POLICY, {}) == Caps()
+
+
+def test_caps_old_cluster_falls_back():
+    caps = caps_from_schemas(OLD_BACKEND, OLD_POLICY, None)
+    assert caps == Caps(backend="openai", provider_host=True, budgets=False, budget_enforcement=False)
+
+
+def test_render_old_cluster_has_no_unsupported_fields(org):
+    caps = caps_from_schemas(OLD_BACKEND, OLD_POLICY, None)
+    objs = render_all(org, [], caps)
+    text = json.dumps(objs)
+    assert "providerOverride" not in text and "entBudgetEnforcement" not in text
+    assert not [o for o in objs if o["kind"] == "EnterpriseAgentgatewayBudget"]
+    backends = [o for o in objs if o["kind"] == "AgentgatewayBackend"]
+    assert len(backends) == 4 and all("openai" in b["spec"]["ai"]["provider"] for b in backends)
+
+
+def test_render_no_backend_type_skips_routes_and_policy(org):
+    objs = render_all(org, [], Caps(backend="none", budgets=False, budget_enforcement=False))
+    assert {o["kind"] for o in objs} == {"Namespace", "Secret"}

@@ -286,7 +286,11 @@ def test_cli_replan_budgets_applies_only_budgets(monkeypatch):
         def apply(self, objs):
             applied.extend(objs)
             return ""
+
+        def crd_spec_schema(self, name):
+            return {}
     monkeypatch.setattr(td, "Kube", K)
+    monkeypatch.setattr(td, "caps_from_schemas", lambda *a: td.Caps())
     assert td.main(["replan-budgets", "--context", "CTX"]) == 0
     assert [o["kind"] for o in applied] == ["EnterpriseAgentgatewayBudget"]
     assert len(applied[0]["spec"]["budgets"]) == 41

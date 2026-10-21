@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import random
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -11,7 +12,7 @@ from .org import Org, _slug, service_identity
 from .pricing import Rates
 from .usage import CLIENT_OTHER, CLIENT_RULES, MODELS, cost, generate
 
-__all__ = ["BUDGET", "CLIENT_RULES", "DIMENSIONS_FILE", "HOSTNAME", "NAMESPACE", "LABELS", "render_all",
+__all__ = ["BUDGET", "Caps", "FULL_CAPS", "caps_from_schemas", "CLIENT_RULES", "DIMENSIONS_FILE", "HOSTNAME", "NAMESPACE", "LABELS", "render_all",
            "plan_budgets", "window_spend", "budget_window", "render_dimensions_values", "client_cel", "budget_entry_names"]
 
 NAMESPACE = "td-demo"
@@ -247,14 +248,54 @@ def _key_entry(org: Org, k) -> str:
     return json.dumps({"key": k.secret, "keyHash": None, "metadata": md}, separators=(",", ":"))
 
 
-def _route_objs() -> list[dict]:
+@dataclass(frozen=True)
+class Caps:
+    """What the cluster's agentgateway CRDs accept (older releases lack some fields)."""
+    backend: str = "custom"        # "custom" (providerOverride) | "openai" | "none"
+    provider_host: bool = True     # provider-level host/port
+    budgets: bool = True           # EnterpriseAgentgatewayBudget CRD installed
+    budget_enforcement: bool = True  # policy traffic.entBudgetEnforcement
+
+
+FULL_CAPS = Caps()
+
+
+def _props(schema: "dict | None", *path: str) -> dict:
+    for key in path:
+        schema = ((schema or {}).get("properties") or {}).get(key)
+    return (schema or {}).get("properties") or {}
+
+
+def caps_from_schemas(backend: "dict | None", policy: "dict | None", budget: "dict | None") -> Caps:
+    """Caps from the CRDs' `spec` schemas (None = CRD not installed)."""
+    provider = _props(backend, "ai", "provider")
+    if "providerOverride" in _props(backend, "ai", "provider", "custom"):
+        kind = "custom"
+    elif "openai" in provider:
+        kind = "openai"
+    else:
+        kind = "none"
+    return Caps(backend=kind, provider_host="host" in provider, budgets=budget is not None,
+                budget_enforcement="entBudgetEnforcement" in _props(policy, "traffic"))
+
+
+def _provider(m, caps: Caps) -> dict:
+    if caps.backend == "custom":
+        prov = {"custom": {"providerOverride": m.provider, "model": m.model, "formats": [{"type": "Completions"}]}}
+    else:
+        prov = {"openai": {"model": m.model}}
+    if caps.provider_host:
+        prov.update(host=PROVIDER_HOSTS[m.provider], port=443)
+    return prov
+
+
+def _route_objs(caps: Caps = FULL_CAPS) -> list[dict]:
     out = []
+    if caps.backend == "none":
+        return out
     for rid, m in MODELS.items():
         out.append({"apiVersion": "agentgateway.dev/v1alpha1", "kind": "AgentgatewayBackend",
-                    "metadata": _meta(rid), "spec": {"ai": {"provider": {"custom": {
-                        "providerOverride": m.provider, "model": m.model,
-                        "formats": [{"type": "Completions"}]},
-                        "host": PROVIDER_HOSTS[m.provider], "port": 443}}}})
+                    "metadata": _meta(rid), "spec": {"ai": {"provider": _provider(m, caps)}}})
         out.append({"apiVersion": "gateway.networking.k8s.io/v1", "kind": "HTTPRoute",
                     "metadata": _meta(rid), "spec": {
                         "parentRefs": [dict(GATEWAY)], "hostnames": [HOSTNAME],
@@ -264,23 +305,29 @@ def _route_objs() -> list[dict]:
     return out
 
 
-def render_all(org: Org, budgets: list[dict]) -> list[dict]:
-    """Every TD object, in apply order (namespace first). All labeled demo=td, all in td-demo."""
-    return [
+def render_all(org: Org, budgets: list[dict], caps: Caps = FULL_CAPS) -> list[dict]:
+    """Every TD object, in apply order (namespace first). All labeled demo=td, all in td-demo.
+
+    `caps` drops what an older agentgateway does not support (see `caps_from_schemas`)."""
+    traffic = {"apiKeyAuthentication": {"mode": "Strict",
+                                        "location": {"header": {"name": "Authorization", "prefix": "Bearer "}},
+                                        "secretRef": {"name": KEYS_SECRET}}}
+    if caps.budgets and caps.budget_enforcement:
+        traffic["entBudgetEnforcement"] = {"discovery": {"namespaces": {"from": "Same"}}}
+    routes = [] if caps.backend == "none" else list(MODELS)
+    objs = [
         {"apiVersion": "v1", "kind": "Namespace", "metadata": _meta(NAMESPACE, namespace=None)},
-        *_route_objs(),
+        *_route_objs(caps),
         {"apiVersion": "v1", "kind": "Secret", "metadata": _meta(KEYS_SECRET), "type": "Opaque",
          "stringData": {k.id: _key_entry(org, k) for k in org.keys}},
-        {"apiVersion": "enterpriseagentgateway.solo.io/v1alpha1", "kind": "EnterpriseAgentgatewayPolicy",
-         "metadata": _meta(POLICY), "spec": {
-             "targetRefs": [{"group": "gateway.networking.k8s.io", "kind": "HTTPRoute", "name": rid}
-                            for rid in MODELS],
-             "traffic": {
-                 "apiKeyAuthentication": {"mode": "Strict",
-                                          "location": {"header": {"name": "Authorization", "prefix": "Bearer "}},
-                                          "secretRef": {"name": KEYS_SECRET}},
-                 "entBudgetEnforcement": {"discovery": {"namespaces": {"from": "Same"}}},
-             }}},
-        {"apiVersion": "enterpriseagentgateway.solo.io/v1alpha1", "kind": "EnterpriseAgentgatewayBudget",
-         "metadata": _meta(BUDGET), "spec": {"budgets": budgets}},
     ]
+    if routes:
+        objs.append({"apiVersion": "enterpriseagentgateway.solo.io/v1alpha1", "kind": "EnterpriseAgentgatewayPolicy",
+                     "metadata": _meta(POLICY), "spec": {
+                         "targetRefs": [{"group": "gateway.networking.k8s.io", "kind": "HTTPRoute", "name": rid}
+                                        for rid in routes],
+                         "traffic": traffic}})
+    if caps.budgets:
+        objs.append({"apiVersion": "enterpriseagentgateway.solo.io/v1alpha1", "kind": "EnterpriseAgentgatewayBudget",
+                     "metadata": _meta(BUDGET), "spec": {"budgets": budgets}})
+    return objs
