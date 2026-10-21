@@ -28,8 +28,8 @@ UI auth.
   figures look like what TD would actually pay.
 - **Budgets:** one per team. Most well under the limit, a couple near it, one or two over.
   The over-limit ones use `Audit` mode so nothing is blocked during the demo.
-- **History:** **7 days** by default, adjustable with a flag (for example 30). Graphs look
-  lived-in from the moment the demo starts.
+- **History:** **30 days** by default (user, 2026-10-21), adjustable with a flag. Graphs
+  look lived-in from the moment the demo starts.
 - **Live traffic:** while the script runs, new requests keep arriving through the real
   gateway, so the UI moves during the demo and traces can be opened.
 - **Portable:** checked into viper-env and runnable **from a laptop** against any kube

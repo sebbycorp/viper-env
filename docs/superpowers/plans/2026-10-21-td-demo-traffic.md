@@ -43,7 +43,7 @@ interface (port 8123) through port-forward.
   - Claude Desktop (about 5) → Bedrock Claude Opus
 - **No real provider calls.** Prices use real per-token rates from the repo's cost
   catalog.
-- **History:** `--days` defaults to 7. Total synthetic spans for 7 days stay under 300,000.
+- **History:** `--days` defaults to 30 (user, 2026-10-21). Synthetic spans stay at or below 150,000 per 7 days, roughly 650,000 for 30 days.
 - **Budgets:** one per team, `onBudgetExceeded: Audit`, never `Block`. 1–2 over the limit,
   2 near it (85–95%), the rest under.
 - **Marking:** every created k8s object carries label `demo: td`. Every synthetic span is
