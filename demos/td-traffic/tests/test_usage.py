@@ -10,16 +10,23 @@ import pytest
 from tdlib.org import build_org
 from tdlib.pricing import load_rates
 from tdlib.usage import (
-    CI_USER_AGENTS, CLIENT_FOR_UA, MODELS, USER_AGENTS, Request, activity, client_for_ua,
-    cost, generate, sample_request,
+    BUCKET, CI_USER_AGENTS, CLIENT_FOR_UA, MODELS, USER_AGENTS, Request, activity, client_for_ua,
+    cost, generate, key_shares, person_rate, requests_for_window, sample_request,
 )
 
 TOR = ZoneInfo("America/Toronto")
+FINGERPRINT = (24_123, Decimal("2199.02"))  # (count, spend) for Tue 2026-10-20 Toronto, seed 1
 RATES_PATH = Path(__file__).resolve().parents[3] / "apps/agentgateway-system/model-costs.yaml"
 
 
 def at(y, m, d, h):
     return datetime(y, m, d, h, tzinfo=TOR).astimezone(timezone.utc)
+
+
+@pytest.fixture(scope="module")
+def month():
+    end = at(2026, 10, 21, 0)
+    return list(generate(build_org(), end - timedelta(days=30), end, seed=11))
 
 
 @pytest.fixture(scope="module")
@@ -74,23 +81,23 @@ def test_tool_matches_model():
 
 def test_business_hours_and_weekends():
     k = _power_key(build_org())
-    assert activity(k, at(2026, 10, 20, 11)) > 5 * activity(k, at(2026, 10, 20, 3))   # Tue 11:00 vs 03:00
-    assert activity(k, at(2026, 10, 20, 11)) > 3 * activity(k, at(2026, 10, 18, 11))  # Tue vs Sun
-    assert activity(k, at(2026, 10, 20, 3)) > 0
+    assert person_rate(k, at(2026, 10, 20, 11)) > 5 * person_rate(k, at(2026, 10, 20, 3))   # Tue 11:00 vs 03:00
+    assert person_rate(k, at(2026, 10, 20, 11)) > 3 * person_rate(k, at(2026, 10, 18, 11))  # Tue vs Sun
+    assert person_rate(k, at(2026, 10, 20, 3)) > 0
 
 
 def test_team_keys_steady_with_night_runs():
     k = next(k for k in build_org().keys if k.kind == "team")
-    assert activity(k, at(2026, 10, 20, 11)) > 3 * activity(k, at(2026, 10, 18, 11))
-    assert activity(k, at(2026, 10, 20, 2)) > 0.1 * activity(k, at(2026, 10, 20, 11))
+    assert person_rate(k, at(2026, 10, 20, 11)) > 3 * person_rate(k, at(2026, 10, 18, 11))
+    assert person_rate(k, at(2026, 10, 20, 2)) > 0.1 * person_rate(k, at(2026, 10, 20, 11))
 
 
 def test_activity_uses_toronto_time_not_local(monkeypatch):
     k = build_org().keys[0]; t = at(2026, 10, 20, 11)
-    a = activity(k, t)
+    a = person_rate(k, t)
     monkeypatch.setenv("TZ", "Asia/Tokyo"); time.tzset()
     try:
-        assert activity(k, t) == a
+        assert person_rate(k, t) == a
     finally:
         monkeypatch.undo(); time.tzset()
 
@@ -123,13 +130,74 @@ def test_generate_is_deterministic():
     assert a != list(generate(o, start, end, seed=4))
 
 
-def test_thirty_days_volume():
+def test_thirty_days_volume(month):
     end = at(2026, 10, 21, 0); start = end - timedelta(days=30)
-    days = [0] * 30; n = 0
-    for r in generate(build_org(), start, end, seed=11):
+    days = [0] * 30
+    for r in month:
         assert start <= r.ts < end
-        days[(r.ts - start) // timedelta(days=1)] += 1; n += 1
-    assert n < 700_000 and all(d > 0 for d in days)
+        days[(r.ts - start) // timedelta(days=1)] += 1
+    assert len(month) < 700_000 and all(d > 0 for d in days)
+
+
+def test_spend_not_concentrated_in_few_users(month):
+    from tdlib.org import service_identity
+    rates = load_rates(RATES_PATH); per = {}
+    for r in month:
+        who = service_identity(r.key)
+        per[who] = per.get(who, 0) + cost(r, rates)["total"]
+    total = sum(per.values()); top = sorted(per.values(), reverse=True)
+    assert top[0] < 5_000
+    assert sum(top[:4]) / total < Decimal("0.40")
+
+
+def test_key_shares_split_person_rate():
+    o = build_org(); shares = key_shares(o); t = at(2026, 10, 20, 11)
+    multi = {}
+    for k in o.keys:
+        if k.user is not None:
+            multi.setdefault(k.user.email, []).append(k)
+    multi = {e: ks for e, ks in multi.items() if len(ks) > 1}
+    assert multi
+    for ks in multi.values():
+        assert sum(shares[k.id] for k in ks) == pytest.approx(1.0)
+        assert sum(activity(k, t, shares[k.id]) for k in ks) == pytest.approx(person_rate(ks[0], t))
+        primary = min(ks, key=lambda k: k.project)
+        assert shares[primary.id] == max(shares[k.id] for k in ks)
+    for k in o.keys:
+        if k.kind == "team":
+            assert shares[k.id] == 1.0
+    # independent of key order
+    import dataclasses
+    rev = dataclasses.replace(o, keys=list(reversed(o.keys)))
+    assert key_shares(rev) == shares
+
+
+def test_generate_equals_concatenated_windows():
+    o = build_org(); end = at(2026, 10, 20, 12); start = end - timedelta(hours=3)
+    rng = random.Random(5); chunks = []; t = start
+    while t < end:
+        chunks += requests_for_window(o, t, min(t + BUCKET, end), rng); t += BUCKET
+    assert list(generate(o, start, end, seed=5)) == chunks and chunks
+
+
+def test_generate_independent_of_process_tz(monkeypatch):
+    o = build_org(); end = at(2026, 10, 20, 12); start = end - timedelta(hours=4)
+    try:
+        monkeypatch.setenv("TZ", "America/Toronto"); time.tzset()
+        a = list(generate(o, start, end, seed=9))
+        monkeypatch.setenv("TZ", "Asia/Tokyo"); time.tzset()
+        b = list(generate(o, start, end, seed=9))
+    finally:
+        monkeypatch.undo(); time.tzset()
+    assert a == b and a
+
+
+def test_fixed_seed_fingerprint():
+    # Pins the model: any change to constants/sampling order shows up here. Update deliberately.
+    end = at(2026, 10, 21, 0); reqs = list(generate(build_org(), end - timedelta(days=1), end, seed=1))
+    rates = load_rates(RATES_PATH)
+    spend = sum(cost(r, rates)["total"] for r in reqs).quantize(Decimal("0.01"))
+    assert (len(reqs), spend) == FINGERPRINT
 
 
 def test_requests_are_well_formed(week):

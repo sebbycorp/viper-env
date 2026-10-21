@@ -134,8 +134,8 @@ CI_WEEKEND_FACTOR = 0.12
 # Expected requests per minute at peak, by tool and persona.
 PEAK_RPM: dict[str, dict[str, float]] = {
     # Copilot power users run agent mode: many back-to-back tool-call turns.
-    "copilot": {"power": 5.0, "regular": 1.20, "light": 0.20},
-    "vscode": {"power": 1.6, "regular": 0.50, "light": 0.15},
+    "copilot": {"power": 3.0, "regular": 2.10, "light": 0.30},
+    "vscode": {"power": 2.0, "regular": 0.70, "light": 0.15},
     "claude-code": {"power": 0.90, "regular": 0.35, "light": 0.10},
     "claude-desktop": {"power": 0.30, "regular": 0.15, "light": 0.06},
 }
@@ -153,9 +153,9 @@ def _curve(kind: str, at_utc: datetime) -> float:
 
 
 def _intensity(key: VirtualKey) -> float:
-    """Stable per-person (or per-pipeline) multiplier in [0.7, 1.3] so no two users look identical."""
+    """Stable per-person (or per-pipeline) multiplier in [0.85, 1.15] so no two users look identical."""
     who = key.user.email if key.user is not None else key.id
-    return 0.7 + 0.6 * (zlib.crc32(who.encode()) % 1000) / 999
+    return 0.85 + 0.3 * (zlib.crc32(who.encode()) % 1000) / 999
 
 
 def _peak(key: VirtualKey) -> float:
@@ -165,12 +165,14 @@ def _peak(key: VirtualKey) -> float:
     return PEAK_RPM[key.tool][key.user.persona] * _intensity(key)
 
 
-def activity(key: VirtualKey, at_utc: datetime, share: float = 1.0) -> float:
-    """Expected requests per minute on this key at this instant.
+def person_rate(key: VirtualKey, at_utc: datetime) -> float:
+    """Expected requests per minute for the key's PERSON (or CI pipeline), across all their keys."""
+    return _peak(key) * _curve(key.kind, at_utc)
 
-    `share` splits a person's activity across their project keys (generate() sets it).
-    """
-    return _peak(key) * _curve(key.kind, at_utc) * share
+
+def activity(key: VirtualKey, at_utc: datetime, share: float) -> float:
+    """Expected requests per minute on this key: person_rate x key_shares(org)[key.id]."""
+    return person_rate(key, at_utc) * share
 
 
 # ---------------------------------------------------------------- per-request sampling
@@ -186,7 +188,7 @@ class _Profile:
 
 
 # Share of Copilot requests that are agent-mode turns, by persona.
-COPILOT_AGENT_SHARE = {"power": 0.90, "regular": 0.70, "light": 0.25}
+COPILOT_AGENT_SHARE = {"power": 0.75, "regular": 0.75, "light": 0.30}
 
 
 def _profile(key: VirtualKey, route_id: str, agent: bool) -> _Profile:
@@ -196,7 +198,7 @@ def _profile(key: VirtualKey, route_id: str, agent: bool) -> _Profile:
     if tool == "copilot":
         if agent:                                           # agent mode, big contexts
             if route_id == "azure-gpt":
-                return _Profile(30_000, 1.3, 0.0, 0.10, 2_600, 0.7)
+                return _Profile(30_000, 1.4, 0.0, 0.10, 3_000, 0.7)
             return _Profile(14_000, 0.9, 0.0, 0.0, 800, 0.7)
         return _Profile(2_500, 0.9, 0.0, 0.15, 400, 0.7)    # chat / inline edits
     if tool == "vscode":                                    # Continue / Cline agent loops
@@ -275,8 +277,13 @@ def _poisson(rng: random.Random, lam: float) -> int:
     return k
 
 
-def _shares(org: Org) -> dict[str, float]:
-    """Split each person's activity across their project keys: primary 65%, rest share 35%."""
+def key_shares(org: Org) -> dict[str, float]:
+    """Fraction of each person's activity that lands on each of their keys (by key id).
+
+    A person with several project keys splits their rate: the key whose project name
+    sorts first is the primary (65%), the rest share 35% equally. Single-key users and
+    team keys get 1.0. Shares of one person always sum to 1.0. Independent of key order.
+    """
     by_user: dict[str, list[VirtualKey]] = {}
     for k in org.keys:
         if k.kind == "personal" and k.user is not None:
@@ -284,32 +291,47 @@ def _shares(org: Org) -> dict[str, float]:
     shares = {k.id: 1.0 for k in org.keys}
     for ks in by_user.values():
         if len(ks) > 1:
+            ks = sorted(ks, key=lambda k: (k.project, k.id))
             shares[ks[0].id] = 0.65
             for k in ks[1:]:
                 shares[k.id] = 0.35 / (len(ks) - 1)
     return shares
 
 
-def generate(org: Org, start_utc: datetime, end_utc: datetime, seed: int) -> Iterator[Request]:
-    """Requests in [start_utc, end_utc), ordered by ts: Poisson per key per 5-minute bucket."""
-    rng = random.Random(seed)
-    shares = _shares(org)
-    rates = [(k, _peak(k) * shares[k.id]) for k in org.keys]
-    t = start_utc
-    while t < end_utc:
-        span = min(BUCKET, end_utc - t)
+def requests_for_window(org: Org, t0_utc: datetime, t1_utc: datetime, rng: random.Random,
+                        shares: dict[str, float] | None = None) -> list[Request]:
+    """All requests in [t0_utc, t1_utc), sorted by ts. Used by generate() and the live driver.
+
+    Poisson per key per <=5-minute sub-bucket, rate = activity at the sub-bucket midpoint.
+    Pass `shares` (from key_shares) to skip recomputing it on every call.
+    """
+    if shares is None:
+        shares = key_shares(org)
+    out: list[Request] = []
+    t = t0_utc
+    while t < t1_utc:
+        span = min(BUCKET, t1_utc - t)
         minutes = span.total_seconds() / 60
         mid = t + span / 2
         curve = {"personal": _curve("personal", mid), "team": _curve("team", mid)}
-        batch: list[Request] = []
-        for k, base in rates:
-            n = _poisson(rng, base * curve[k.kind] * minutes)
+        for k in org.keys:
+            n = _poisson(rng, _peak(k) * shares[k.id] * curve[k.kind] * minutes)
             for _ in range(n):
-                ts = t + span * rng.random()
-                batch.append(sample_request(k, ts, rng))
-        batch.sort(key=lambda r: r.ts)
-        yield from batch
+                out.append(sample_request(k, t + span * rng.random(), rng))
         t += span
+    out.sort(key=lambda r: r.ts)
+    return out
+
+
+def generate(org: Org, start_utc: datetime, end_utc: datetime, seed: int) -> Iterator[Request]:
+    """Requests in [start_utc, end_utc), ordered by ts: requests_for_window per 5-minute bucket."""
+    rng = random.Random(seed)
+    shares = key_shares(org)
+    t = start_utc
+    while t < end_utc:
+        t1 = min(t + BUCKET, end_utc)
+        yield from requests_for_window(org, t, t1, rng, shares)
+        t = t1
 
 
 def cost(req: Request, rates: dict[tuple[str, str], Rates]) -> dict[str, Decimal]:
