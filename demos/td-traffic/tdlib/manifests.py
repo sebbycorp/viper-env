@@ -74,7 +74,7 @@ budgetDimensions:
 # ---------------------------------------------------------------- budgets
 
 # The gateway's `window: {unit: Month}` is a fixed 30-day period aligned to the Unix epoch, NOT the calendar
-# month (NOTES.md "Budget counters"): on omni-viper on 2026-10-21 the Redis counter key suffix was
+# month (NOTES.md "Budget counters"): on the verification cluster on 2026-10-21 the Redis counter key suffix was
 # 1791072000 = 2026-10-04 00:00 UTC = 691 x 2,592,000 s, with a ~30-day TTL.
 BUDGET_WINDOW = timedelta(days=30)
 

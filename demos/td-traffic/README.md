@@ -1,5 +1,31 @@
 # TD Bank demo traffic for the agentgateway UI
 
+## Quickstart
+
+Prerequisites: [`uv`](https://docs.astral.sh/uv/), `kubectl`, `helm`, and a Kubernetes cluster
+running Solo Enterprise for agentgateway (a Gateway, default `agentgateway-proxy`) and the
+Solo UI (management chart, with its ClickHouse).
+
+```bash
+git clone https://github.com/sebbycorp/viper-env && cd viper-env/demos/td-traffic
+uv run td.py demo --context <ctx>     # preflight, up, 30-day backfill, budget sync (~15 min)
+uv run td.py live --context <ctx>     # live traffic until Ctrl-C
+```
+
+`demo` ends by printing the Solo UI address (LoadBalancer / NodePort, or a `kubectl
+port-forward` command). Open it and look at Cost Management, Budgets, Virtual Keys and
+Traces.
+
+Cleanup: `uv run td.py down --purge-history --context <ctx>`
+
+If your release, namespace or Gateway names differ, pass `--release`, `--namespace` (where
+the agentgateway release, Gateway, Solo UI and ClickHouse live) and `--gateway` to every
+command. The ClickHouse pod and its auth Secret are found by the name pattern `*clickhouse*`
+in that namespace. If something is missing, `demo` / `up` say exactly what and what to install,
+and change nothing.
+
+---
+
 A laptop-run tool that fills the Solo Enterprise agentgateway UI with synthetic usage from a
 fictional TD Bank (@td.com) AI-assistant rollout. It gives you 30 days of history in
 Cost Management, populated Budgets and Virtual Keys pages, and live traces on demo day.
@@ -22,11 +48,11 @@ All calls are fake. A mock LLM runs in the cluster; nothing goes to a real provi
 - `uv` (Python and dependencies are handled by the `uv run` script header).
 - `kubectl` and `helm` on the PATH.
 - A kube context for a cluster that runs enterprise agentgateway (Gateway
-  `agentgateway-proxy`) and the Solo UI with ClickHouse.
+  `agentgateway-proxy` by default) and the Solo UI with ClickHouse.
 - Every command needs `--context <ctx>`; the current context is never used.
 
 ```bash
-CTX=maniak-omni-viper
+CTX=<your kube context>
 uv run demos/td-traffic/td.py <command> --context $CTX
 ```
 
@@ -34,13 +60,19 @@ uv run demos/td-traffic/td.py <command> --context $CTX
 
 | Command | What it does |
 |---|---|
+| `demo [--days 30] [--seed N]` | One shot: preflight, `up`, `backfill --replace`, `sync-budgets`; prints the UI URL and the `live` command. |
 | `up [--seed N]` | Creates the demo objects, keys, budgets and dimensions (see below). |
 | `backfill [--days 30] [--replace] [--seed N] [--batch N] [--force-new-backup]` | Writes synthetic history straight into ClickHouse. Refuses if TD history exists; `--replace` purges it first. |
 | `sync-budgets [--dry-run] [--seed N]` | Tops the gateway budget counters up to the backfilled history, then removes its marker spans. Idempotent. `--dry-run` prints the plan and sends nothing. |
 | `replan-budgets [--seed N]` | Re-applies only the budgets, sized for the current budget window. |
-| `live [--duration 10m] [--speed X] [--min-rpm 6] [--concurrency 4] [--seed N]` | Sends real requests through the gateway with TD keys. Runs until Ctrl-C unless `--duration` is set. |
+| `live [--duration D] [--speed X] [--min-rpm 6] [--concurrency 4] [--seed N]` | Sends real requests through the gateway with TD keys. Runs until Ctrl-C unless `--duration` is set. |
 | `status` | Counts TD objects and span rows; prints the budget window and next rollover. |
 | `down [--purge-history] [--force-new-backup]` | Removes the demo. |
+
+All commands also take `--namespace`, `--release` and `--gateway` (see Quickstart).
+`--seed`: use the same seed for `up`, `backfill`, `sync-budgets` and `replan-budgets`, or leave
+it unset everywhere (default 42); budgets are sized on the history that seed generates.
+`live` runs until Ctrl-C; `--duration` (e.g. `90s`, `10m`, `2h`) stops it earlier.
 
 ### What `up` changes on the cluster
 
@@ -83,8 +115,17 @@ Order matters. Do not run `sync-budgets` while `live` is running.
   next rollover. After it, re-run `replan-budgets` (or `up`), `backfill --replace` and
   `sync-budgets`.
 - Re-running `sync-budgets` is safe: a second run sends 0 marker requests.
-- Limits are sized so a few teams are over budget and a few are near; groups and the org sit
-  at about 60-90%.
+- 41 Audit budgets (Audit only: nothing is ever blocked):
+  - monthly USD: 1 org, 5 groups, 15 teams (2 over, 2 near, the rest under), 12 projects
+    (at least 1 over and 1 near), and the top 5 spenders by user (at least 1 near);
+    groups and the org sit at about 60-90%;
+  - daily Tokens: the 3 biggest teams. `sync-budgets` re-sizes them on today's counter
+    (its catch-up requests charge tokens too) so they sit at 50-90%.
+- `sync-budgets` closes the gap per virtual key (each team's gap split by its keys' share), so
+  team, group, org, project and user counters all line up with the generated history.
+- **Early in a budget window** (less than 5 days since it started) the window-to-date spend is
+  small, so the limits look small too. `up`, `replan-budgets` and `status` warn about it. Wait,
+  or re-run `replan-budgets` and `sync-budgets` a few days later.
 
 ## Known limits
 
@@ -99,13 +140,30 @@ Order matters. Do not run `sync-budgets` while `live` is running.
   the next request per team. `sync-budgets` sends those requests itself.
 - Each purge adds snapshot tables to `td_purge_backup` in ClickHouse. It grows over time.
   Drop it when you no longer need to restore: `DROP DATABASE td_purge_backup`
-  (the purge prints this statement).
+  (the purge prints this statement). This is safe only when no purge is incomplete (a
+  purge that never reached `verified`; the next purge would refuse and print its restore).
 
 ### Recovery
 
 If a sync's marker purge fails, or a purge is blocked with `PurgeIncompleteError`, the tool
-prints the restore SQL for that purge. Run it, then re-run the command. `--force-new-backup`
-overrides the block, but only after you have restored the earlier purge.
+prints the restore SQL for that purge, writes it to `td-restore-<stamp>.sql` in the current
+directory, and prints a ready-to-run command, for example:
+
+```bash
+kubectl --context <ctx> -n agentgateway-system exec -i <clickhouse pod> -- clickhouse-client \
+  --user "$(kubectl ... get secret <auth secret> -o jsonpath='{.data.username}' | base64 -d)" \
+  --password "$(kubectl ... get secret <auth secret> -o jsonpath='{.data.password}' | base64 -d)" \
+  --multiquery < td-restore-<stamp>.sql
+```
+
+Copy the printed one (every value is already filled in and shell-quoted), run it, then re-run
+the command. `--force-new-backup` overrides the block, but only after you have restored the
+earlier purge. Before any mutation, a purge also checks that the recomputed rollups would
+match the real totals; if not, it aborts with nothing changed.
+
+`down` refuses (exit 1, nothing deleted) if the saved original Helm values are gone but the
+release still carries the TD `budgetDimensions`; it prints the `helm upgrade --reset-values`
+recovery commands.
 
 ## Cleanup
 

@@ -32,7 +32,7 @@ were verified, and so was a matching HTTPRoute on `agentgateway-proxy` with
 | route id | HTTPRoute path (PathPrefix) | providerOverride | backend `model` | `provider` in custom_dimensions | catalog provider key | catalog model key | rates $/1M (in / out / cacheRead) | priced by | Task 6 required |
 |---|---|---|---|---|---|---|---|---|---|
 | azure-gpt | `/azure/gpt-5-4` | `azure` | `gpt-5.4` | `azure` | `azure` | `gpt-5.4` | 2.5 / 15 / 0.25 (above 272k context: 5 / 22.5 / 0.5) | proxy **built-in** catalog | no |
-| azure-gpt-mini | `/azure/gpt-5-4-mini` (proposed) | `azure` | `gpt-5.4-mini` | `azure` | `azure` | `gpt-5.4-mini` | 0.75 / 4.5 / **not measured** (see note) | proxy **built-in** catalog | no (yes only if `gpt-4.1-mini` is kept) |
+| azure-gpt-mini | `/azure/gpt-5-4-mini` | `azure` | `gpt-5.4-mini` | `azure` | `azure` | `gpt-5.4-mini` | 0.75 / 4.5 / **not measured** (see note) | proxy **built-in** catalog | no (yes only if `gpt-4.1-mini` is kept) |
 | bedrock-opus | `/bedrock/claude-opus-5-5` | `aws.bedrock` | `anthropic.claude-opus-5-5` | `aws.bedrock` | `aws.bedrock` | `anthropic.claude-opus-5-5` | 4 / 20 / 0.2 (cacheWrite 5) | `model-costs` ConfigMap | no |
 | mistral-large | `/mistral/mistral-large` | `mistral` | `mistral-large-latest` | `mistral` | `mistral` | `mistral-large-latest` | 0.5 / 1.5 / 0.05 | proxy **built-in** catalog | no |
 
@@ -145,9 +145,9 @@ stringData:
 In this example, the data key name, `metadata.id` and the UI Key ID are all the same
 string.
 
-The shared team key has no `user`. Requests made with it carry no `user` pair in
-`custom_dimensions`; this was verified with `td-team-shared-1`. The UI shows `—` in the
-User column.
+Update: the team keys this tool creates DO carry `user = svc-<team>@td.com`
+(`org.service_identity`), so their requests have a `user` pair in `custom_dimensions`. The
+spike's shared key (`td-team-shared-1`) had no `user`; then the UI showed `—` in the User column.
 
 Policy (the Secret must be in the **policy's namespace**). **Every TD HTTPRoute must be
 listed in `targetRefs`.** A route that is left out gets no API-key auth, which means no

@@ -43,7 +43,7 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             body = {}
         h = self.headers
-        time.sleep(min(num(h, "x-td-latency-ms", 0), 3000) / 1000)
+        time.sleep(max(0, min(num(h, "x-td-latency-ms", 0), 3000)) / 1000)
         status = num(h, "x-td-status", 200)
         if status != 200:
             err = {"message": f"injected error {status}", "type": ERR_TYPES.get(status, "server_error"),
