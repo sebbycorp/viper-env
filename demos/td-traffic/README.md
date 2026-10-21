@@ -22,6 +22,9 @@ gh release download -R sebbycorp/viper-env --pattern td-traffic.py
 # curl -fLO https://github.com/sebbycorp/viper-env/releases/latest/download/td-traffic.py
 ```
 
+Or take the prebuilt script straight from the repo: [`demos/td-traffic/release/td-traffic.py`](release/td-traffic.py)
+(regenerate it with `scripts/build-td-traffic.sh` and copy `dist/td-traffic.py` there after changing the code).
+
 Run it. This form works on stock macOS (its `python3` is 3.9):
 
 ```bash
