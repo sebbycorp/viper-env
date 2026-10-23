@@ -1,0 +1,34 @@
+# Namespaces (PSA privileged for Substrate) + ExternalSecrets for licenses,
+# Postgres connection strings and model API keys. Values live in Vault only.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: agentic-platform
+  namespace: argocd
+  labels:
+    cluster: omni-viper
+    app.kubernetes.io/name: agentic-platform
+    app.kubernetes.io/part-of: viper-env
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:sebbycorp/viper-env.git
+    targetRevision: HEAD
+    path: apps/agentic-platform
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m

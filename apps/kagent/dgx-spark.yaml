@@ -1,0 +1,29 @@
+# DNS alias for the DGX Spark vLLM server (172.16.10.173:8000). kagent only
+# allows DNS origins for model egress, so a selector-less Service + EndpointSlice
+# gives it dgx-spark.kagent.svc.cluster.local. Also used by agentgateway /spark.
+apiVersion: v1
+kind: Service
+metadata:
+  name: dgx-spark
+  namespace: kagent
+spec:
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+      protocol: TCP
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: dgx-spark-1
+  namespace: kagent
+  labels:
+    kubernetes.io/service-name: dgx-spark
+addressType: IPv4
+ports:
+  - name: http
+    port: 8000
+    protocol: TCP
+endpoints:
+  - addresses: ["172.16.10.173"]

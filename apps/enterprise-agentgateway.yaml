@@ -1,0 +1,42 @@
+# Solo Enterprise for agentgateway control plane (GatewayClass enterprise-agentgateway).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: enterprise-agentgateway
+  namespace: argocd
+  labels:
+    cluster: omni-viper
+    app.kubernetes.io/name: enterprise-agentgateway
+    app.kubernetes.io/part-of: viper-env
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  sources:
+    - repoURL: us-docker.pkg.dev/solo-public/enterprise-agentgateway/charts
+      chart: enterprise-agentgateway
+      targetRevision: v2026.10.0
+      helm:
+        releaseName: enterprise-agentgateway
+        valueFiles:
+          - $values/values/enterprise-agentgateway.yaml
+    - repoURL: git@github.com:sebbycorp/viper-env.git
+      targetRevision: HEAD
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: agentgateway-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m

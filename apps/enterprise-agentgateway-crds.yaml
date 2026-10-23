@@ -1,0 +1,38 @@
+# Solo Enterprise for agentgateway CRDs.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: enterprise-agentgateway-crds
+  namespace: argocd
+  labels:
+    cluster: omni-viper
+    app.kubernetes.io/name: enterprise-agentgateway-crds
+    app.kubernetes.io/part-of: viper-env
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  project: default
+  sources:
+    - repoURL: us-docker.pkg.dev/solo-public/enterprise-agentgateway/charts
+      chart: enterprise-agentgateway-crds
+      targetRevision: v2026.10.0
+      helm:
+        releaseName: enterprise-agentgateway-crds
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: agentgateway-system
+  syncPolicy:
+    automated:
+      # Never prune CRDs: deleting one deletes every custom resource of that kind.
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m

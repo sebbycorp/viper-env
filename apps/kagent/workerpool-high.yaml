@@ -1,6 +1,6 @@
 # Reserved capacity for high-priority agents: low-tier (kagent-default)
 # traffic can never occupy these workers. Same Substrate Enterprise worker image
-# as the Helm-owned pool (substrateWorkerPool.workerImage in docs/kagent-values.yaml).
+# as the Helm-owned pool (substrateWorkerPool.workerImage in values/kagent-enterprise.yaml).
 apiVersion: ate.dev/v1alpha1
 kind: WorkerPool
 metadata:

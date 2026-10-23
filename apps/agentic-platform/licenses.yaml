@@ -1,0 +1,56 @@
+# Product licenses. Values live only in Vault KV v2 at secret/lab/viper/licenses:
+#   vault kv put secret/lab/viper/licenses \
+#     kagent=@kagent.lic agentgateway=@agentgateway.lic management=@solo.lic
+# Secret names/keys are what each chart reads with licensing.createSecret=false.
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: enterprise-kagent-license
+  namespace: kagent
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: vault-lab}
+  target: {name: enterprise-kagent-license, creationPolicy: Owner}
+  data:
+    - secretKey: enterprise-kagent-license-key
+      remoteRef: {key: lab/viper/licenses, property: kagent}
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: enterprise-agentgateway-license
+  namespace: agentgateway-system
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: vault-lab}
+  target: {name: enterprise-agentgateway-license, creationPolicy: Owner}
+  data:
+    - secretKey: enterprise-agentgateway-license-key
+      remoteRef: {key: lab/viper/licenses, property: agentgateway}
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: enterprise-agentgateway-license
+  namespace: ate-system
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: vault-lab}
+  target: {name: enterprise-agentgateway-license, creationPolicy: Owner}
+  data:
+    - secretKey: enterprise-agentgateway-license-key
+      remoteRef: {key: lab/viper/licenses, property: agentgateway}
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: management-license
+  namespace: agentgateway-system
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: vault-lab}
+  target: {name: management-license, creationPolicy: Owner}
+  data:
+    - secretKey: license-key
+      remoteRef: {key: lab/viper/licenses, property: management}

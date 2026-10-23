@@ -1,0 +1,9 @@
+# Solo Enterprise for agentgateway control plane (release enterprise-agentgateway
+# → ns agentgateway-system). Rendered by Argo CD Application
+# apps/enterprise-agentgateway.yaml. Data-plane config (Gateway, backends,
+# routes, policies) lives in apps/agentgateway-system.
+licensing:
+  # Secret enterprise-agentgateway-license (key enterprise-agentgateway-license-key)
+  # is written by ESO from Vault — see apps/agentic-platform/licenses.yaml.
+  createSecret: false
+  secretName: enterprise-agentgateway-license
