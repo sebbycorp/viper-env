@@ -1,0 +1,38 @@
+# Agent Substrate Enterprise CRDs.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: substrate-crds
+  namespace: argocd
+  labels:
+    cluster: omni-viper
+    app.kubernetes.io/name: substrate-crds
+    app.kubernetes.io/part-of: viper-env
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  project: default
+  sources:
+    - repoURL: us-docker.pkg.dev/solo-public/enterprise-substrate-helm
+      chart: substrate-crds
+      targetRevision: 0.5.0-alpha3-e492046
+      helm:
+        releaseName: substrate-crds
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ate-system
+  syncPolicy:
+    automated:
+      # Never prune CRDs: deleting one deletes every custom resource of that kind.
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m

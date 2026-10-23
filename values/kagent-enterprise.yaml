@@ -1,11 +1,8 @@
-# kagent Enterprise Helm values (release kagent, ns kagent) — installed by Helm, not Argo CD.
-# Fresh install of 1.0.0-alpha10 on 2026-10-17 (replaced 1.0.0-alpha3; chat/session history was not migrated).
-#   helm upgrade --install kagent-crds oci://us-docker.pkg.dev/solo-public/kagent-enterprise-helm/charts/kagent-enterprise-crds \
-#     --version 1.0.0-alpha10 -n kagent
-#   helm upgrade --install kagent oci://us-docker.pkg.dev/solo-public/kagent-enterprise-helm/charts/kagent-enterprise \
-#     --version 1.0.0-alpha10 -n kagent -f docs/kagent-values.yaml
-# Then: kubectl -n kagent patch svc kagent-ui -p '{"spec":{"ports":[{"port":8080,"nodePort":30500}]}}'
-# Agent Substrate is a separate release (docs/substrate-values.yaml). Only Secret *names* appear here.
+# kagent Enterprise (release kagent-enterprise → ns kagent). Rendered by Argo CD
+# Application apps/kagent-enterprise.yaml. Only Secret *names* appear here:
+#   enterprise-kagent-license  ← apps/agentic-platform/licenses.yaml (Vault secret/lab/viper/licenses)
+#   kagent-postgres            ← apps/agentic-platform/postgres.yaml (Vault secret/lab/viper/postgres)
+#   kagent-spark-openai        ← apps/agentic-platform/model-secrets.yaml
 global:
   cluster: omni-viper
   istio:
@@ -92,10 +89,12 @@ telemetry:
   selfMonitoring:
     enabled: true
     verbose: true
-# UI on NodePort 30500 (HTTP); HTTPS 30501 is the separate nginx kagent-ui-tls front.
+# UI Service stays ClusterIP; apps/kagent/ui-nodeport.yaml pins NodePort 30500
+# (the chart cannot pin a nodePort). HTTPS 30501 is the hand-built nginx
+# kagent-ui-tls front, which proxies to kagent-ui:8080 and is not in git.
 ui:
   service:
-    type: NodePort
+    type: ClusterIP
     ports:
       port: 8080
       targetPort: 8080

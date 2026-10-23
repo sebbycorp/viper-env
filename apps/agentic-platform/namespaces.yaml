@@ -1,0 +1,26 @@
+# Substrate worker pods (gVisor) and atelet need capabilities, unconfined
+# seccomp and hostPaths, which Talos' default "baseline" PodSecurity rejects.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kagent
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+    ate.dev/api-access: "true"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ate-system
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: podcertificate-controller-system
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agentgateway-system

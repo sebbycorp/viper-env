@@ -1,0 +1,26 @@
+# Agent Substrate Enterprise (release substrate → ns ate-system). Rendered by
+# Argo CD Application apps/substrate.yaml. Native PodCertificate mode:
+# Kubernetes 1.36 serves certificates.k8s.io/v1beta1 PodCertificateRequest +
+# ClusterTrustBundle (feature gates on the Omni cluster).
+#
+# Pre-existing / out-of-band (names only):
+#   ate-system/enterprise-agentgateway-license   ← apps/agentic-platform/licenses.yaml
+#   ate-system/substrate-postgres-owner          ← apps/agentic-platform/postgres.yaml
+#   ate-system/substrate-postgres-readwrite      ← apps/agentic-platform/postgres.yaml
+#   ate-system/postgres-ca-pool                  ← `kubectl ate admin make-ca-pool` (one-time)
+usePodCertificateAPI: true
+postgres:
+  ownerRole: substrate_owner
+  readWriteRole: substrate_readwrite
+  schema: substrate
+  clientCertificates:
+    enabled: false
+credentialProvider:
+  namespacePolicies:
+    - atespace: kagent
+      allowedNamespaces: [kagent]
+global:
+  licensing:
+    # GitOps: the license comes from Vault via ESO, never from --set-file.
+    createSecret: false
+    secretName: enterprise-agentgateway-license

@@ -21,6 +21,9 @@ spec:
             exclude: true
           - path: apps/external-secrets
             exclude: true
+          # Synced by apps/agentic-platform.yaml (wave -2, cluster-scoped Namespaces).
+          - path: apps/agentic-platform
+            exclude: true
   template:
     metadata:
       name: '{{.path.basename}}'

@@ -4,8 +4,10 @@ Private GitOps repository for Omni Kubernetes cluster **omni-viper**
 (Talos 1.13.10 / Kubernetes 1.36.4, as of the 2026-09-16 upgrade).
 
 Argo CD is already installed on the cluster. This repo is the desired-state
-source for phase 1: app-of-apps bootstrap, Argo CD self-management path, and
-External Secrets Operator talking to HashiCorp Vault.
+source for: app-of-apps bootstrap, Argo CD self-management path, External
+Secrets Operator talking to HashiCorp Vault, and the agentic stack (kagent
+Enterprise, Agent Substrate, Solo Enterprise for agentgateway + UI) — see
+[docs/agentic-stack.md](docs/agentic-stack.md).
 
 Proxmox guests are migrating from node **viper** (`172.16.10.6`) to
 **iceman** (`172.16.10.5`). **omni-viper should live on iceman** going
@@ -85,6 +87,7 @@ Operator landing page (not GitOps): http://172.16.10.126:3000 — see
 
 | Topic | Doc |
 | --- | --- |
+| kagent + agentgateway Enterprise via Argo CD (charts, versions, Vault paths, cutover) | [docs/agentic-stack.md](docs/agentic-stack.md) |
 | OSS kagent + Agent Substrate (this Omni cluster, not k3s-viper) | [docs/kagent-substrate.md](docs/kagent-substrate.md) |
 | TypeSafe / Jev MVP (ns `kagent`) | [docs/typesafe-jev.md](docs/typesafe-jev.md) |
 | FortiGate agent plan (upstream k8s-viper) | [docs/fortigate-agent-omni.md](docs/fortigate-agent-omni.md) |
@@ -109,9 +112,17 @@ apps/
   external-secrets-config.yaml  # Vault ClusterSecretStore + demo ExternalSecret
   argocd/                       # Placeholder for later Argo CD self-management
   external-secrets/             # ClusterSecretStore + demo ExternalSecret
+  helm-repos.yaml               # Argo CD OCI repo entries for Solo charts (no creds)
+  gateway-api-crds.yaml, *-crds.yaml, substrate*.yaml,
+  enterprise-agentgateway.yaml, management.yaml, kagent-enterprise.yaml
+                                # Agentic stack Helm Applications (docs/agentic-stack.md)
+  agentic-platform/             # Namespaces + license/postgres/model ExternalSecrets
+  agentgateway-system/, kagent/ # Gateway + agent config (ApplicationSet)
+values/                         # Helm values for the agentic stack Applications
 clusters/omni-viper/            # Cluster notes and optional overlays
 docs/                           # Lab operator docs (not synced by Argo CD)
-.github/workflows/              # gitleaks on pull requests (no workflow secrets)
+scripts/validate.sh             # kustomize build + helm template for every app
+.github/workflows/              # gitleaks + validate on pull requests (no workflow secrets)
 ```
 
 `bootstrap/` is apply-once. After the root Application exists, Argo CD syncs
@@ -174,8 +185,11 @@ then syncs `apps/`, which creates:
 - `Application/argocd` — tracks `apps/argocd` (placeholder ConfigMap)
 - `Application/external-secrets` — Helm chart 2.9.0 (wave 0)
 - `Application/external-secrets-config` — Vault store + demo ExternalSecret (wave 1)
+- The agentic stack (waves -5 to 0): Gateway API CRDs, Solo chart CRDs,
+  Substrate, enterprise-agentgateway, management (Solo UI), kagent-enterprise
+  and `agentic-platform`. See [docs/agentic-stack.md](docs/agentic-stack.md).
 - `ApplicationSet/omni-viper-apps` — auto-Applications for new `apps/*`
-  folders other than `argocd` and `external-secrets`
+  folders other than `argocd`, `external-secrets` and `agentic-platform`
 
 Watch:
 

@@ -11,3 +11,4 @@ resources:
   - openai-models.yaml
   - bedrock-gateway.yaml
   - bedrock-models.yaml
+  - ui-nodeport.yaml

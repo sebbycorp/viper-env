@@ -5,3 +5,15 @@ resources:
   - argocd.yaml
   - external-secrets.yaml
   - external-secrets-config.yaml
+  # Agentic stack: kagent Enterprise + agentgateway Enterprise (see README).
+  - helm-repos.yaml                     # wave -5 Argo CD OCI repo entries
+  - gateway-api-crds.yaml               # wave -3
+  - agentic-platform.yaml               # wave -2 namespaces + ExternalSecrets
+  - enterprise-agentgateway-crds.yaml   # wave -1
+  - kagent-crds.yaml                    # wave -1
+  - substrate-crds.yaml                 # wave -1
+  - substrate-podcert.yaml              # wave 0
+  - substrate.yaml                      # wave 0
+  - enterprise-agentgateway.yaml        # wave 0
+  - management.yaml                     # wave 0
+  - kagent-enterprise.yaml              # wave 0

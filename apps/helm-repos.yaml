@@ -1,0 +1,61 @@
+# Argo CD repository entries for Solo's public OCI Helm registries.
+# No credentials: these are public pulls. Argo CD needs enableOCI for OCI charts.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: repo-solo-kagent-enterprise
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: repository
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
+stringData:
+  name: solo-kagent-enterprise
+  type: helm
+  enableOCI: "true"
+  url: us-docker.pkg.dev/solo-public/kagent-enterprise-helm/charts
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: repo-solo-enterprise-substrate
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: repository
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
+stringData:
+  name: solo-enterprise-substrate
+  type: helm
+  enableOCI: "true"
+  url: us-docker.pkg.dev/solo-public/enterprise-substrate-helm
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: repo-solo-enterprise-agentgateway
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: repository
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
+stringData:
+  name: solo-enterprise-agentgateway
+  type: helm
+  enableOCI: "true"
+  url: us-docker.pkg.dev/solo-public/enterprise-agentgateway/charts
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: repo-solo-enterprise-management
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: repository
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
+stringData:
+  name: solo-enterprise-management
+  type: helm
+  enableOCI: "true"
+  url: us-docker.pkg.dev/solo-public/solo-enterprise-helm/charts
