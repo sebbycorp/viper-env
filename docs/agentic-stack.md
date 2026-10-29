@@ -128,6 +128,13 @@ Merging to `main` is the deploy, because the root Application auto-syncs. In ord
    so nobody runs `helm upgrade` against Argo-owned objects. **Do not run
    `helm uninstall`**, because it would delete the live objects.
 
+Handover note (2026-10-29): during the takeover the chart UI Services switch
+to ClusterIP while the new pinned NodePort Services claim 30400/30500. An app
+whose first sync of the new revision fails on "port already allocated" is not
+re-attempted for that same commit. If a UI port stays dark, resync the app
+(`argocd app sync kagent`) or push any commit. The ApplicationSet now has a
+retry policy, so later revisions recover on their own.
+
 Sync waves only order when Applications are created. Argo CD does not wait for
 a child Application to be healthy without an Application health check in
 `argocd-cm`. Each Application therefore retries with backoff and uses
