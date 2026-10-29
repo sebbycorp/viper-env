@@ -69,7 +69,7 @@ in namespace `external-secrets` (keys `role-id`, `secret-id`). Create it
 out-of-band. **Never commit that Secret.**
 
 If you are about to `git add` a file that could unlock the cluster, stop.
-`.gitignore` excludes common credential patterns. PRs also run gitleaks.
+`.gitignore` excludes common credential patterns.
 
 ## Lab status / endpoints
 
@@ -122,7 +122,7 @@ values/                         # Helm values for the agentic stack Applications
 clusters/omni-viper/            # Cluster notes and optional overlays
 docs/                           # Lab operator docs (not synced by Argo CD)
 scripts/validate.sh             # kustomize build + helm template for every app
-.github/workflows/              # gitleaks + validate on pull requests (no workflow secrets)
+.github/workflows/              # validate on pull requests + td-traffic release (no workflow secrets)
 ```
 
 `bootstrap/` is apply-once. After the root Application exists, Argo CD syncs
@@ -225,9 +225,3 @@ ExternalSecret. Do not add a `kind: Secret` with real `data` / `stringData`.
 - `.env` files, kubeconfigs, `*.pem` / `*.key`, SSH private keys, license keys
 - Vault tokens, AppRole role-id/secret-id, GitHub PATs, Omni/Sidero credentials
 - Decoded TLS material or copied `argocd-secret` / `vault-token` / `vault-approle` YAML
-
-Scan before you push:
-
-```bash
-gitleaks detect --source . --verbose --redact
-```
