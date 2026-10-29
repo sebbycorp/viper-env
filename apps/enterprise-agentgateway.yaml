@@ -15,7 +15,7 @@ spec:
   sources:
     - repoURL: us-docker.pkg.dev/solo-public/enterprise-agentgateway/charts
       chart: enterprise-agentgateway
-      targetRevision: v2026.10.0
+      targetRevision: v2026.10.2
       helm:
         releaseName: enterprise-agentgateway
         valueFiles:

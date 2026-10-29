@@ -20,21 +20,36 @@ apps/ (root Application omni-viper-root)
 
 | Component | Chart (`us-docker.pkg.dev/solo-public/...`) | Version | Release → namespace | Values |
 | --- | --- | --- | --- | --- |
-| agentgateway CRDs | `enterprise-agentgateway/charts/enterprise-agentgateway-crds` | v2026.10.0 | `enterprise-agentgateway-crds` → `agentgateway-system` | — |
-| agentgateway control plane | `enterprise-agentgateway/charts/enterprise-agentgateway` | v2026.10.0 | `enterprise-agentgateway` → `agentgateway-system` | [enterprise-agentgateway.yaml](../values/enterprise-agentgateway.yaml) |
+| agentgateway CRDs | `enterprise-agentgateway/charts/enterprise-agentgateway-crds` | v2026.10.2 | `enterprise-agentgateway-crds` → `agentgateway-system` | — |
+| agentgateway control plane | `enterprise-agentgateway/charts/enterprise-agentgateway` | v2026.10.2 | `enterprise-agentgateway` → `agentgateway-system` | [enterprise-agentgateway.yaml](../values/enterprise-agentgateway.yaml) |
 | Solo Enterprise UI | `solo-enterprise-helm/charts/management` | 0.5.9 | `management` → `agentgateway-system` | [management.yaml](../values/management.yaml) |
 | kagent CRDs | `kagent-enterprise-helm/charts/kagent-enterprise-crds` | 1.0.0-alpha10 | `kagent-crds` → `kagent` | — |
 | kagent | `kagent-enterprise-helm/charts/kagent-enterprise` | 1.0.0-alpha10 | `kagent` → `kagent` | [kagent-enterprise.yaml](../values/kagent-enterprise.yaml) |
 | Substrate CRDs / podcert / core | `enterprise-substrate-helm/substrate{-crds,-podcert,}` | 0.5.0-alpha3-e492046 | `substrate*` → `ate-system` / `podcertificate-controller-system` | [substrate.yaml](../values/substrate.yaml) |
 
-These are the versions running on omni-viper today. Each `releaseName`
-matches its existing Helm release, so Argo CD renders the same object names
-and label selectors and takes the live objects over without recreating them.
+Each `releaseName` matches the Helm release that was installed by hand, so
+Argo CD renders the same object names and label selectors and takes the live
+objects over without recreating them. When Argo adopts the release, it moves
+agentgateway from v2026.10.0 to v2026.10.2 in place. v2026.10.2 adds the
+`EnterpriseAgentgatewayRbacPolicy` CRD and an optional built-in UI subchart
+(`ui.enabled`, off by default). The license Secret name and key are unchanged.
 
-Newer versions were published on 2026-10-22: agentgateway v2026.10.1, kagent
-1.0.0-alpha11, management 0.5.12 and substrate 0.6.0-alpha3. To upgrade, bump
-`targetRevision` in `apps/<name>.yaml` in a PR. Keep kagent and Substrate in
-lockstep, and check the harness runtime pairing in
+Equivalent to the upstream install:
+
+```bash
+helm upgrade -i -n agentgateway-system --version v2026.10.2 enterprise-agentgateway-crds \
+  oci://us-docker.pkg.dev/solo-public/enterprise-agentgateway/charts/enterprise-agentgateway-crds
+helm upgrade -i -n agentgateway-system --version v2026.10.2 enterprise-agentgateway \
+  oci://us-docker.pkg.dev/solo-public/enterprise-agentgateway/charts/enterprise-agentgateway \
+  --set-string licensing.licenseKey=$AGENTGATEWAY_LICENSE_KEY
+```
+
+Here the license comes from Vault (`secret/lab/viper/licenses`, property
+`agentgateway`) through ESO instead of `--set-string`. Do not run those Helm
+commands against omni-viper: Argo CD owns these releases.
+
+To upgrade a chart, bump `targetRevision` in `apps/<name>.yaml` in a PR. Keep
+kagent and Substrate in lockstep, and check the harness runtime pairing in
 [kagent-substrate.md](kagent-substrate.md).
 
 ## Endpoints
