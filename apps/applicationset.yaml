@@ -48,3 +48,11 @@ spec:
         syncOptions:
           - CreateNamespace=true
           - ServerSideApply=true
+        # Retry: during the Helm → Argo CD handover a NodePort can still be held
+        # by the old chart Service for a moment (kagent-ui-nodeport, solo-enterprise-ui-nodeport).
+        retry:
+          limit: 10
+          backoff:
+            duration: 15s
+            factor: 2
+            maxDuration: 5m
