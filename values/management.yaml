@@ -1,9 +1,8 @@
-# Solo Enterprise UI for agentgateway (management chart 0.5.9), installed by Helm:
-#   helm upgrade -i management oci://us-docker.pkg.dev/solo-public/solo-enterprise-helm/charts/management \
-#     --version 0.5.9 -n agentgateway-system -f docs/agentgateway-ui-values.yaml
-# License Secret management-license (key: license-key) is created out of band — never commit it.
-# UI NodePort pinned to 30400 with kubectl patch after install.
-# UI Deployment strategy patched to maxSurge=0 (the node cannot fit two UI pods during a rollout).
+# Solo Enterprise UI for agentgateway (management chart, release management →
+# ns agentgateway-system). Rendered by Argo CD Application apps/management.yaml.
+# License Secret management-license (key: license-key) comes from Vault via ESO.
+# UI NodePort 30400 lives in apps/agentgateway-system/ui-nodeport.yaml; strategy maxSurge=0 because the single node
+# cannot fit two UI pods during a rollout (see apps/management.yaml).
 cluster: omni-viper
 platform:
   multiCluster:
@@ -24,7 +23,8 @@ licensing:
 service:
   type: ClusterIP
   ui:
-    type: NodePort
+    # NodePort 30400 is pinned by apps/agentgateway-system/ui-nodeport.yaml.
+    type: ClusterIP
 clickhouse:
   resources:
     requests:

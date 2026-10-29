@@ -1,0 +1,9 @@
+# Synced by Application agentic-platform (wave -2). Requires ClusterSecretStore
+# vault-lab (apps/external-secrets) and ESO AppRole read on secret/lab/viper/*.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespaces.yaml
+  - licenses.yaml
+  - postgres.yaml
+  - model-secrets.yaml

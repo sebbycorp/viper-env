@@ -22,6 +22,19 @@ from Vault (`secret/lab/viper/...`).
 | `external-secrets.yaml` | Helm chart for the operator (sync wave 0) |
 | `external-secrets/` + `external-secrets-config.yaml` | ClusterSecretStore + demo ExternalSecret (sync wave 1) |
 
+## Agentic stack apps
+
+See [docs/agentic-stack.md](../docs/agentic-stack.md). Values live in `values/`.
+
+| Folder / CR | How it is installed |
+| --- | --- |
+| `helm-repos.yaml` | Argo CD OCI repository entries (wave -5, no credentials) |
+| `gateway-api-crds.yaml` | Gateway API v1.6.0 standard CRDs from git (wave -3) |
+| `agentic-platform/` + `agentic-platform.yaml` | Namespaces + ExternalSecrets for licenses, Postgres, model keys (wave -2) |
+| `*-crds.yaml` | Solo chart CRDs, `prune: false` (wave -1) |
+| `substrate-podcert.yaml`, `substrate.yaml`, `enterprise-agentgateway.yaml`, `management.yaml`, `kagent-enterprise.yaml` | Helm charts with `$values/values/*.yaml` (wave 0) |
+| `agentgateway-system/`, `kagent/` | ApplicationSet (Gateways, backends, Harnesses, Agents) |
+
 ## Adding a new app
 
 Directory-only:

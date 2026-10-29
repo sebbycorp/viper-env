@@ -1,0 +1,45 @@
+# Postgres connection strings (in-cluster StatefulSet postgres/postgres,
+# pgvector/pgvector:pg16 — lab grade, no backups, not managed by this repo).
+#   vault kv put secret/lab/viper/postgres \
+#     kagent='postgres://kagent_owner:...@postgres.postgres.svc:5432/kagent?sslmode=disable' \
+#     substrate_owner='postgres://substrate_owner:...@postgres.postgres.svc:5432/substrate?sslmode=disable' \
+#     substrate_readwrite='postgres://substrate_readwrite:...@postgres.postgres.svc:5432/substrate?sslmode=disable'
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: kagent-postgres
+  namespace: kagent
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: vault-lab}
+  target: {name: kagent-postgres, creationPolicy: Owner}
+  data:
+    - secretKey: connectionString
+      remoteRef: {key: lab/viper/postgres, property: kagent}
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: substrate-postgres-owner
+  namespace: ate-system
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: vault-lab}
+  target: {name: substrate-postgres-owner, creationPolicy: Owner}
+  data:
+    - secretKey: ownerConnectionString
+      remoteRef: {key: lab/viper/postgres, property: substrate_owner}
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: substrate-postgres-readwrite
+  namespace: ate-system
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: vault-lab}
+  target: {name: substrate-postgres-readwrite, creationPolicy: Owner}
+  data:
+    - secretKey: readWriteConnectionString
+      remoteRef: {key: lab/viper/postgres, property: substrate_readwrite}

@@ -1,0 +1,37 @@
+# Substrate pod-certificate signer.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: substrate-podcert
+  namespace: argocd
+  labels:
+    cluster: omni-viper
+    app.kubernetes.io/name: substrate-podcert
+    app.kubernetes.io/part-of: viper-env
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  sources:
+    - repoURL: us-docker.pkg.dev/solo-public/enterprise-substrate-helm
+      chart: substrate-podcert
+      targetRevision: 0.5.0-alpha3-e492046
+      helm:
+        releaseName: substrate-podcert
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: podcertificate-controller-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m

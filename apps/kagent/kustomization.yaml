@@ -15,3 +15,5 @@ resources:
   - workerpool-coding.yaml
   - harness-coding.yaml
   - agent-codex-coder.yaml
+  - dgx-spark.yaml
+  - ui-nodeport.yaml

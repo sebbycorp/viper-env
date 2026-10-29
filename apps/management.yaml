@@ -1,0 +1,53 @@
+# Solo Enterprise UI for agentgateway (UI, ClickHouse, telemetry collector).
+# The chart hardcodes maxSurge=1 on solo-enterprise-ui; the single node cannot fit
+# two UI pods, so the strategy is ignored here and patched once out-of-band:
+#   kubectl -n agentgateway-system patch deploy solo-enterprise-ui \
+#     -p '{"spec":{"strategy":{"rollingUpdate":{"maxSurge":0,"maxUnavailable":1}}}}'
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: management
+  namespace: argocd
+  labels:
+    cluster: omni-viper
+    app.kubernetes.io/name: management
+    app.kubernetes.io/part-of: viper-env
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  sources:
+    - repoURL: us-docker.pkg.dev/solo-public/solo-enterprise-helm/charts
+      chart: management
+      targetRevision: 0.5.9
+      helm:
+        releaseName: management
+        valueFiles:
+          - $values/values/management.yaml
+    - repoURL: git@github.com:sebbycorp/viper-env.git
+      targetRevision: HEAD
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: agentgateway-system
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      name: solo-enterprise-ui
+      jsonPointers:
+        - /spec/strategy
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true
+      - RespectIgnoreDifferences=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m

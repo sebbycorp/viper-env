@@ -1,0 +1,42 @@
+# kagent Enterprise controller, UI, tools, ClickHouse, telemetry + default WorkerPool.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kagent-enterprise
+  namespace: argocd
+  labels:
+    cluster: omni-viper
+    app.kubernetes.io/name: kagent-enterprise
+    app.kubernetes.io/part-of: viper-env
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  sources:
+    - repoURL: us-docker.pkg.dev/solo-public/kagent-enterprise-helm/charts
+      chart: kagent-enterprise
+      targetRevision: 1.0.0-alpha10
+      helm:
+        releaseName: kagent
+        valueFiles:
+          - $values/values/kagent-enterprise.yaml
+    - repoURL: git@github.com:sebbycorp/viper-env.git
+      targetRevision: HEAD
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kagent
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m

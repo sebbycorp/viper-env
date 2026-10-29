@@ -16,7 +16,7 @@ manifest originals ([fortigate-agent-omni.md](fortigate-agent-omni.md)).
 | Versions | Talos **v1.13.10**, Kubernetes **v1.36.4** (upgrade 2026-09-16) |
 | Feature gates | `PodCertificateRequest` + `ClusterTrustBundle` (required for Agent Substrate) |
 | kagent | Solo Enterprise for kagent **1.0.0-alpha10** (fresh install 2026-10-17; was 1.0.0-alpha3) |
-| Agent Substrate | Substrate Enterprise **0.5.0-alpha3-e492046** (Helm; was OSS v0.2.0-beta4 from source) |
+| Agent Substrate | Substrate Enterprise **0.5.0-alpha3-e492046** (Argo CD Application `substrate`; was OSS v0.2.0-beta4 from source) |
 | Argo CD | https://172.16.10.178:30443 and :30080 |
 | kagent UI (HTTPS, preferred) | https://viper.maniak.lab:30501/ |
 | kagent UI (HTTP, fallback) | http://172.16.10.178:30500 |
@@ -58,9 +58,9 @@ HTTPS is the proper fix.
 
 HTTP NodePort **30500** remains as a fallback (plain HTTP; not a
 secure context). Prefer HTTPS for UI features that need a secure
-context. The alpha10 chart does not let you pin the nodePort, so after a
-fresh install patch it back:
-`kubectl -n kagent patch svc kagent-ui -p '{"spec":{"ports":[{"port":8080,"nodePort":30500}]}}'`.
+context. The alpha10 chart cannot pin a nodePort, so the chart Service
+`kagent-ui` stays ClusterIP and
+[apps/kagent/ui-nodeport.yaml](../apps/kagent/ui-nodeport.yaml) pins 30500.
 
 ### Already live (do not redeploy)
 
@@ -76,7 +76,7 @@ repo.
 | Lab CA ClusterIssuer | `kagent-lab-ca-issuer` |
 | UI Certificate | `kagent-ui-tls` in namespace `kagent` (secret `kagent-ui-tls`). Intended SANs: DNS `viper.maniak.lab`, IP `172.16.10.178` (infra re-issues separately) |
 | TLS front | Deployment `kagent-ui-tls` (nginx) + Service NodePort **30501** terminating TLS → `kagent-ui:8080` |
-| HTTP front | kagent UI Service NodePort **30500** |
+| HTTP front | Service `kagent-ui-nodeport` NodePort **30500** (GitOps, `apps/kagent/ui-nodeport.yaml`) |
 
 ### Trust the lab CA
 
@@ -96,26 +96,18 @@ That file is a **public CA certificate** for trust, not a private key.
 Do not commit it (`.gitignore` already excludes `*.crt`). Do not export
 or commit TLS private keys.
 
-## Install (Helm, not Argo CD)
+## Install (Argo CD)
 
 kagent 1.0.0-alpha10 is a re-platform of alpha3: the API group moved from
 `kagent.dev` to **`api.kagent.dev/v1alpha3`**, Postgres is no longer bundled
-and Agent Substrate is no longer a subchart. Install order:
+and Agent Substrate is no longer a subchart.
 
-1. Postgres: StatefulSet `postgres/postgres` (`pgvector/pgvector:pg16`), DBs
-   `kagent` (schemas `kagent`, `enterprise`, `extensions` + `vector`, role
-   `kagent_owner`) and `substrate` (schema `substrate`, roles
-   `substrate_owner` / `substrate_readwrite`). Connection secrets:
-   `kagent/kagent-postgres` (`connectionString`),
-   `ate-system/substrate-postgres-owner`, `ate-system/substrate-postgres-readwrite`.
-2. Substrate: `substrate-crds`, `substrate-podcert`, `substrate` —
-   [substrate-values.yaml](substrate-values.yaml) (native PodCertificate
-   mode, agentgateway Enterprise license).
-3. kagent: `kagent-crds` then `kagent` — [kagent-values.yaml](kagent-values.yaml)
-   (license secret `enterprise-kagent-license`, created out of band).
-4. Argo CD app `kagent` syncs [apps/kagent](../apps/kagent/) (tiers below).
-
-Secrets and licenses come from Vault; only names live in this repo.
+Argo CD installs the charts (CRDs, Substrate, kagent) from
+[values/](../values/). The licenses and connection strings come from Vault
+through ESO. See [agentic-stack.md](agentic-stack.md) for the Applications,
+the Vault layout and the one-time move off the hand-installed Helm releases.
+Postgres (StatefulSet `postgres/postgres`, `pgvector/pgvector:pg16`, DBs
+`kagent` and `substrate`) is still created by hand and has no backups.
 
 ## Agent Substrate
 
@@ -123,7 +115,7 @@ Secrets and licenses come from Vault; only names live in this repo.
 | --- | --- |
 | Charts | `oci://us-docker.pkg.dev/solo-public/enterprise-substrate-helm` 0.5.0-alpha3-e492046 |
 | Worker image | `us-docker.pkg.dev/solo-public/substrate-enterprise/ateom-gvisor:v0.5.0-alpha3-e492046` |
-| WorkerPools | `kagent-default` (Helm), `kagent-high`, `kagent-coding` (Argo) in namespace `kagent` |
+| WorkerPools | `kagent-default` (chart), `kagent-high`, `kagent-coding` (Argo) in namespace `kagent` |
 | ate-api | `dns:///api.ate-system.svc:443` |
 
 The old from-source install (`hack/install-ate.sh`, ko images on the
@@ -143,7 +135,7 @@ one WorkerPool, so a "tier" is a Harness + its own WorkerPool. Manifests:
 | Tier | Harness | WorkerPool | Workers | PriorityClass | Agents |
 | --- | --- | --- | --- | --- | --- |
 | High | `high` | `kagent-high` | 2 (reserved) | `substrate-high` (100000, `preemptionPolicy: Never`) | `k8s-assistant-priority` |
-| Low | `default` | `kagent-default` (Helm `substrateWorkerPool.replicas`) | 3 | none | `k8s-assistant`, `fortigate` |
+| Low | `default` | `kagent-default` (chart `substrateWorkerPool.replicas`) | 3 | none | `k8s-assistant`, `fortigate` |
 | Coding | `coding` (Codex runtime) | `kagent-coding` | 3 | none | `codex-coder` (ModelConfig `codex-gpt-5-4`) |
 
 To move an agent to another tier, change `spec.harnessRef` on its Agent.
@@ -166,7 +158,7 @@ as Chat Completions.
 
 | ModelConfig | Provider | Notes |
 | --- | --- | --- |
-| `default-model-config` | OpenAI-compatible (Helm `providers.openAI`) | Spark: Service `kagent/dgx-spark` → `http://172.16.10.173:8000/v1`, served model `qwen3.8-flash-next` = `Mia-AiLab/Qwen3.8-Flash-Next-NVFP4` (DGX Spark) |
+| `default-model-config` | OpenAI-compatible (chart `providers.openAI`) | Spark: Service `kagent/dgx-spark` → `http://172.16.10.173:8000/v1`, served model `qwen3.8-flash-next` = `Mia-AiLab/Qwen3.8-Flash-Next-NVFP4` (DGX Spark) |
 | `codex-gpt-5-4` | OpenAI `gpt-5.4` via agentgateway | Gateway injects the real OpenAI key (Vault `secret/lab/oss-gateways/openai` or `secret/lab/openai`) |
 
 Wire keys with ExternalSecret → Kubernetes Secret. Do not paste key

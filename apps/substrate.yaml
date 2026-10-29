@@ -1,0 +1,43 @@
+# Agent Substrate Enterprise (ate-api, atelet, atenet). Needs postgres-ca-pool
+# (one-time `kubectl ate admin make-ca-pool`) and the ESO secrets from agentic-platform.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: substrate
+  namespace: argocd
+  labels:
+    cluster: omni-viper
+    app.kubernetes.io/name: substrate
+    app.kubernetes.io/part-of: viper-env
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  sources:
+    - repoURL: us-docker.pkg.dev/solo-public/enterprise-substrate-helm
+      chart: substrate
+      targetRevision: 0.5.0-alpha3-e492046
+      helm:
+        releaseName: substrate
+        valueFiles:
+          - $values/values/substrate.yaml
+    - repoURL: git@github.com:sebbycorp/viper-env.git
+      targetRevision: HEAD
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ate-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m
