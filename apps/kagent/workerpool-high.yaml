@@ -13,7 +13,11 @@ metadata:
     substrate.viper-env/tier: high
 spec:
   replicas: 2
-  sandboxClass: gvisor
+  # Substrate 0.6: sandboxClasses (one entry; names are immutable once set).
+  sandboxClasses:
+    - name: gvisor
+      configRef:
+        name: gvisor-default
   workerImage: us-docker.pkg.dev/solo-public/substrate-enterprise/ateworker-gvisor:v0.6.0-b15382d4
   template:
     serviceAccountName: kagent-default
