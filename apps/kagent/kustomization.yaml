@@ -1,6 +1,6 @@
 # Synced by the omni-viper ApplicationSet into namespace kagent.
-# kagent Enterprise 1.0.0-alpha10 (api.kagent.dev/v1alpha3) on Agent Substrate
-# Enterprise 0.5.0-alpha3. Adds the default Harness plus a high-priority tier and
+# kagent Enterprise 1.0.0-alpha12 (api.kagent.dev/v1alpha3) on Agent Substrate
+# Enterprise 0.6.0. Adds the default Harness plus a high-priority tier and
 # a Codex coding tier next to the Helm-owned kagent-default pool (low tier);
 # see docs/kagent-substrate.md.
 apiVersion: kustomize.config.k8s.io/v1beta1

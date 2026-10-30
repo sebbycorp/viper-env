@@ -24,8 +24,8 @@ apps/ (root Application omni-viper-root)
 | agentgateway control plane | `enterprise-agentgateway/charts/enterprise-agentgateway` | v2026.10.2 | `enterprise-agentgateway` → `agentgateway-system` | [enterprise-agentgateway.yaml](../values/enterprise-agentgateway.yaml) |
 | Solo Enterprise UI | `solo-enterprise-helm/charts/management` | 0.5.9 | `management` → `agentgateway-system` | [management.yaml](../values/management.yaml) |
 | kagent CRDs | `kagent-enterprise-helm/charts/kagent-enterprise-crds` | 1.0.0-alpha10 | `kagent-crds` → `kagent` | — |
-| kagent | `kagent-enterprise-helm/charts/kagent-enterprise` | 1.0.0-alpha10 | `kagent` → `kagent` | [kagent-enterprise.yaml](../values/kagent-enterprise.yaml) |
-| Substrate CRDs / podcert / core | `enterprise-substrate-helm/substrate{-crds,-podcert,}` | 0.5.0-alpha3-e492046 | `substrate*` → `ate-system` / `podcertificate-controller-system` | [substrate.yaml](../values/substrate.yaml) |
+| kagent | `kagent-enterprise-helm/charts/kagent-enterprise` | 1.0.0-alpha12 | `kagent` → `kagent` | [kagent-enterprise.yaml](../values/kagent-enterprise.yaml) |
+| Substrate CRDs / podcert / core | `enterprise-substrate-helm/substrate{-crds,-podcert,}` | 0.6.0-b15382d4 | `substrate*` → `ate-system` / `podcertificate-controller-system` | [substrate.yaml](../values/substrate.yaml) |
 
 Each `releaseName` matches the Helm release that was installed by hand, so
 Argo CD renders the same object names and label selectors and takes the live

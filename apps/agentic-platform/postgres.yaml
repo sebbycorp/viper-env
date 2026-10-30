@@ -1,21 +1,37 @@
 # Postgres connection strings (in-cluster StatefulSet postgres/postgres,
 # pgvector/pgvector:pg16 — lab grade, no backups, not managed by this repo).
 #   vault kv put secret/lab/viper/postgres \
-#     kagent='postgres://kagent_owner:...@postgres.postgres.svc:5432/kagent?sslmode=disable' \
+#     kagent='postgres://kagent_user:...@postgres.postgres.svc:5432/kagent?sslmode=disable' \
 #     substrate_owner='postgres://substrate_owner:...@postgres.postgres.svc:5432/substrate?sslmode=disable' \
 #     substrate_readwrite='postgres://substrate_readwrite:...@postgres.postgres.svc:5432/substrate?sslmode=disable'
 ---
+# kagent >= 1.0.0-alpha11 takes an owner and a read/write connection. Both carry the
+# kagent_user login (member of kagent_owner and kagent_readwrite); the controller
+# SETs ROLE per connection.
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
-  name: kagent-postgres
+  name: kagent-postgres-owner
   namespace: kagent
 spec:
   refreshInterval: 1h
   secretStoreRef: {kind: ClusterSecretStore, name: vault-lab}
-  target: {name: kagent-postgres, creationPolicy: Owner}
+  target: {name: kagent-postgres-owner, creationPolicy: Owner}
   data:
-    - secretKey: connectionString
+    - secretKey: ownerConnectionString
+      remoteRef: {key: lab/viper/postgres, property: kagent}
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: kagent-postgres-readwrite
+  namespace: kagent
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: vault-lab}
+  target: {name: kagent-postgres-readwrite, creationPolicy: Owner}
+  data:
+    - secretKey: readWriteConnectionString
       remoteRef: {key: lab/viper/postgres, property: kagent}
 ---
 apiVersion: external-secrets.io/v1

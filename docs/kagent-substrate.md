@@ -15,8 +15,8 @@ manifest originals ([fortigate-agent-omni.md](fortigate-agent-omni.md)).
 | Node | `talos-cyv-ekb` @ `172.16.10.178` |
 | Versions | Talos **v1.13.10**, Kubernetes **v1.36.4** (upgrade 2026-09-16) |
 | Feature gates | `PodCertificateRequest` + `ClusterTrustBundle` (required for Agent Substrate) |
-| kagent | Solo Enterprise for kagent **1.0.0-alpha10** (fresh install 2026-10-17; was 1.0.0-alpha3) |
-| Agent Substrate | Substrate Enterprise **0.5.0-alpha3-e492046** (Argo CD Application `substrate`; was OSS v0.2.0-beta4 from source) |
+| kagent | Solo Enterprise for kagent **1.0.0-alpha12** (2026-10-30, fresh DB schemas; was 1.0.0-alpha10, before that alpha3) |
+| Agent Substrate | Substrate Enterprise **0.6.0-b15382d4** (Argo CD Application `substrate`; was 0.5.0-alpha3-e492046) |
 | Argo CD | https://172.16.10.178:30443 and :30080 |
 | kagent UI (HTTPS, preferred) | https://viper.maniak.lab:30501/ |
 | kagent UI (HTTP, fallback) | http://172.16.10.178:30500 |
@@ -58,7 +58,7 @@ HTTPS is the proper fix.
 
 HTTP NodePort **30500** remains as a fallback (plain HTTP; not a
 secure context). Prefer HTTPS for UI features that need a secure
-context. The alpha10 chart cannot pin a nodePort, so the chart Service
+context. The chart cannot pin a nodePort, so the chart Service
 `kagent-ui` stays ClusterIP and
 [apps/kagent/ui-nodeport.yaml](../apps/kagent/ui-nodeport.yaml) pins 30500.
 
@@ -98,7 +98,7 @@ or commit TLS private keys.
 
 ## Install (Argo CD)
 
-kagent 1.0.0-alpha10 is a re-platform of alpha3: the API group moved from
+kagent 1.0.0-alpha10 was a re-platform of alpha3: the API group moved from
 `kagent.dev` to **`api.kagent.dev/v1alpha3`**, Postgres is no longer bundled
 and Agent Substrate is no longer a subchart.
 
@@ -109,12 +109,34 @@ the Vault layout and the one-time move off the hand-installed Helm releases.
 Postgres (StatefulSet `postgres/postgres`, `pgvector/pgvector:pg16`, DBs
 `kagent` and `substrate`) is still created by hand and has no backups.
 
+### Upgrading kagent (alpha10 → alpha12, 2026-10-30)
+
+- alpha11 split the database login: the controller takes
+  `kagent-postgres-owner` (migrations, `SET ROLE kagent_owner`) and
+  `kagent-postgres-readwrite` (`SET ROLE kagent_readwrite`). The old
+  `connectionStringSecretRef` is ignored silently. Both Secrets carry the
+  `kagent_user` login, so Vault needed no new value.
+- The pre-1.0 migrations are compacted baselines ("databases must be
+  recreated when it changes"), so an alpha bump needs fresh `kagent` and
+  `enterprise` schemas. Sessions, memory and Postgres evals are lost; CRDs are
+  not. Recreate them with the two `setup.sql` scripts from
+  `solo-io/enterprise-kagent` at the release tag, as `postgres`:
+  `go/core/pkg/postgressetup/setup.sql` (`kagent_owner_user=kagent_user`,
+  its existing password; `kagent_readwrite_user=kagent_readwrite_user`, empty
+  password), then `GRANT kagent_readwrite TO kagent_user` and
+  `GRANT USAGE ON SCHEMA extensions TO kagent_readwrite` (pgvector), then
+  `enterprise/services/solo-enterprise/migrations/postgres/setup/setup.sql`
+  (`agentevals_user=`).
+- Substrate must match the Substrate version in the kagent release's `go/go.mod` (alpha12 → 0.6.0).
+- The ApplicationSet app `kagent` (Harnesses, WorkerPools) has no auto-sync:
+  sync it by hand after a merge.
+
 ## Agent Substrate
 
 | Preference | Value |
 | --- | --- |
-| Charts | `oci://us-docker.pkg.dev/solo-public/enterprise-substrate-helm` 0.5.0-alpha3-e492046 |
-| Worker image | `us-docker.pkg.dev/solo-public/substrate-enterprise/ateom-gvisor:v0.5.0-alpha3-e492046` |
+| Charts | `oci://us-docker.pkg.dev/solo-public/enterprise-substrate-helm` 0.6.0-b15382d4 |
+| Worker image | `us-docker.pkg.dev/solo-public/substrate-enterprise/ateworker-gvisor:v0.6.0-b15382d4` (renamed from `ateom-gvisor` in 0.6) |
 | WorkerPools | `kagent-default` (chart), `kagent-high`, `kagent-coding` (Argo) in namespace `kagent` |
 | ate-api | `dns:///api.ate-system.svc:443` |
 
@@ -143,10 +165,10 @@ Worker pods request no CPU, so the extra pools fit on the CPU-bound node;
 the PriorityClass only decides eviction order and never preempts other pods.
 
 Harness runtime images must match the controller's runtime contract, not
-its version number. kagent Enterprise 1.0.0-alpha10 (built 2026-10-13) pairs
-with OSS **1.0.0-alpha13** runtimes
-(`ghcr.io/kagent-dev/kagent/golang-adk:1.0.0-alpha13` and
-`ghcr.io/kagent-dev/kagent/codex-harness:1.0.0-alpha13`, by digest). The
+its version number. kagent Enterprise 1.0.0-alpha12 pairs with OSS
+**1.0.0-alpha17** runtimes (`ghcr.io/kagent-dev/kagent/golang-adk:1.0.0-alpha17`
+and `ghcr.io/kagent-dev/kagent/codex-harness:1.0.0-alpha17`, by digest; the
+release's `release-manifest.json` lists them). The
 OSS alpha10-12 runtimes still require `KAGENT_API_URL` and crash before the
 golden snapshot (`GoldenActorCrashed`). Codex speaks the OpenAI
 Responses API, so ModelConfig `codex-gpt-5-4` uses `apiFormat: responses`
