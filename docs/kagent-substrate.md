@@ -123,7 +123,8 @@ Postgres (StatefulSet `postgres/postgres`, `pgvector/pgvector:pg16`, DBs
   `solo-io/enterprise-kagent` at the release tag, as `postgres`:
   `go/core/pkg/postgressetup/setup.sql` (`kagent_owner_user=kagent_user`,
   its existing password; `kagent_readwrite_user=kagent_readwrite_user`, empty
-  password), then `GRANT kagent_readwrite TO kagent_user`, then
+  password), then `GRANT kagent_readwrite TO kagent_user` and
+  `GRANT USAGE ON SCHEMA extensions TO kagent_readwrite` (pgvector), then
   `enterprise/services/solo-enterprise/migrations/postgres/setup/setup.sql`
   (`agentevals_user=`).
 - Substrate must match the Substrate version in the kagent release's `go/go.mod` (alpha12 → 0.6.0).
