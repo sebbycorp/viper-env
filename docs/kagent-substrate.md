@@ -130,6 +130,44 @@ Postgres (StatefulSet `postgres/postgres`, `pgvector/pgvector:pg16`, DBs
 - Substrate must match the Substrate version in the kagent release's `go/go.mod` (alpha12 → 0.6.0).
 - The ApplicationSet app `kagent` (Harnesses, WorkerPools) has no auto-sync:
   sync it by hand after a merge.
+- Stop the old controller before the new one migrates: pause auto-sync on
+  `kagent-enterprise` and scale `kagent-controller` to 0. During a rolling
+  update the old pod keeps running while the new one isn't Ready, and on
+  2026-10-30 alpha10 re-migrated the fresh schemas, so they had to be wiped twice.
+- alpha12 dropped the `controller.substrate.enabled` alias. Without
+  `controller.substrateClientCertificate.enabled: true` the controller dials
+  ate-api with no CA or client cert and fails with "context deadline exceeded".
+- The ClickHouse warning "schema version 11 is ahead of embedded 1" is expected:
+  alpha12 compacted the ClickHouse baseline. Existing data stays and the
+  controller runs in compatibility mode.
+
+### Upgrading Substrate (0.5 → 0.6, 2026-10-30)
+
+Values in `values/substrate.yaml`: `ateApi.authorization.bootstrapOwners` must
+list `spiffe://cluster.local/ns/kagent/sa/kagent-controller`, because ate-api
+authorizes every call through OpenFGA; without it agents fail with
+`RuntimePreparationFailed (PermissionDenied)`. Also set
+`preview: [PerTemplateSnapshotLocation]`, because the Harnesses set their own
+snapshot location. `kagent install` sets both. Other changes:
+
+- The worker image is renamed to `ateworker-gvisor`. WorkerPools take
+  `spec.sandboxClasses: [{name: gvisor, configRef: {name: gvisor-default}}]`
+  instead of `sandboxClass`.
+- Stale Helm field ownership: the pre-Argo Helm releases' `helm` field
+  manager keeps fields that 0.6 moved, such as `ATE_STORAGE_BACKEND` and the
+  `AWS_*` variables on atelet and ate-api-server, and atelet's old 8085 `grpc`
+  port. 0.6 refuses to start with them. Remove the `helm` entries from
+  `managedFields` on Argo-tracked workloads, then drop the stale fields once.
+- Reset by hand (not in git):
+  - Recreate `ate-system/actor-id-jwt-pool` with
+    `kubectl ate admin make-jwt-pool` (v0.6.0), which now also needs a `jwks` key.
+  - Remove `actorIdentityJWTProvider` from the `ate-api-authentication`
+    ConfigMap.
+  - Delete `/var/lib/ate/image-cache` on the node (its layout changed from v1 to v2).
+  - Recreate the `substrate` schema with the v0.6.0
+    `pkg/postgressetup/setup.sql`, because 0.5 worker rows don't parse in 0.6.
+- Argo kept a stale schema for the changed CRDs (`ComparisonError ... field not
+  declared in schema`) until the `argocd-application-controller` restarted.
 
 ## Agent Substrate
 
