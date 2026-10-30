@@ -15,7 +15,7 @@ spec:
   sources:
     - repoURL: us-docker.pkg.dev/solo-public/enterprise-substrate-helm
       chart: substrate-crds
-      targetRevision: 0.5.0-alpha3-e492046
+      targetRevision: 0.6.0-b15382d4
       helm:
         releaseName: substrate-crds
   destination:

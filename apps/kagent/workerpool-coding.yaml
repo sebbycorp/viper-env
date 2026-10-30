@@ -14,7 +14,7 @@ metadata:
 spec:
   replicas: 3
   sandboxClass: gvisor
-  workerImage: us-docker.pkg.dev/solo-public/substrate-enterprise/ateom-gvisor:v0.5.0-alpha3-e492046
+  workerImage: us-docker.pkg.dev/solo-public/substrate-enterprise/ateworker-gvisor:v0.6.0-b15382d4
   template:
     serviceAccountName: kagent-default
     labels:

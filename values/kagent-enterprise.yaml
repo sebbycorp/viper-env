@@ -1,7 +1,8 @@
 # kagent Enterprise (release kagent-enterprise → ns kagent). Rendered by Argo CD
 # Application apps/kagent-enterprise.yaml. Only Secret *names* appear here:
 #   enterprise-kagent-license  ← apps/agentic-platform/licenses.yaml (Vault secret/lab/viper/licenses)
-#   kagent-postgres            ← apps/agentic-platform/postgres.yaml (Vault secret/lab/viper/postgres)
+#   kagent-postgres-owner      ← apps/agentic-platform/postgres.yaml (Vault secret/lab/viper/postgres)
+#   kagent-postgres-readwrite  ← apps/agentic-platform/postgres.yaml (Vault secret/lab/viper/postgres)
 #   kagent-spark-openai        ← apps/agentic-platform/model-secrets.yaml
 global:
   cluster: omni-viper
@@ -12,16 +13,26 @@ global:
     createSecret: false
     secretName: enterprise-kagent-license
 # --- Database: in-cluster Postgres (ns postgres, pgvector/pgvector:pg16), password auth ---
+# Since 1.0.0-alpha11 the controller uses two connections: owner (migrations) and
+# readWrite (every other query). Both Secrets hold the kagent_user login, which is a
+# member of both roles; the controller SETs ROLE per connection. Prepare the database
+# with both setup.sql scripts from solo-io/enterprise-kagent (see docs/kagent-substrate.md).
 database:
   postgres:
-    connectionStringSecretRef:
-      name: kagent-postgres
-      key: connectionString
+    ownerConnectionStringSecretRef:
+      name: kagent-postgres-owner
+      key: ownerConnectionString
+    readWriteConnectionStringSecretRef:
+      name: kagent-postgres-readwrite
+      key: readWriteConnectionString
     clientCertificate:
       enabled: false
 config:
   database:
-    role: kagent_owner
+    owner:
+      role: kagent_owner
+    readWrite:
+      role: kagent_readwrite
     schema: kagent
     vectorSchema: extensions
     vectorEnabled: true
@@ -54,7 +65,7 @@ substrateWorkerPool:
   name: kagent-default
   replicas: 3
   sandboxClass: gvisor
-  workerImage: us-docker.pkg.dev/solo-public/substrate-enterprise/ateom-gvisor:v0.5.0-alpha3-e492046
+  workerImage: us-docker.pkg.dev/solo-public/substrate-enterprise/ateworker-gvisor:v0.6.0-b15382d4
 # --- Default model: Spark Qwen (DGX Spark 172.16.10.173 via Service kagent/dgx-spark) ---
 providers:
   default: openAI

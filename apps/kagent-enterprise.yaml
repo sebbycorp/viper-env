@@ -15,7 +15,7 @@ spec:
   sources:
     - repoURL: us-docker.pkg.dev/solo-public/kagent-enterprise-helm/charts
       chart: kagent-enterprise
-      targetRevision: 1.0.0-alpha10
+      targetRevision: 1.0.0-alpha12
       helm:
         releaseName: kagent
         valueFiles:
