@@ -9,6 +9,16 @@
 #   ate-system/substrate-postgres-readwrite      ← apps/agentic-platform/postgres.yaml
 #   ate-system/postgres-ca-pool                  ← `kubectl ate admin make-ca-pool` (one-time)
 usePodCertificateAPI: true
+# Substrate 0.6 (as `kagent install` sets it): Harnesses set their own
+# snapshotPolicy.location, and ate-api authorizes every call through OpenFGA,
+# so the kagent controller must be a bootstrap owner or agents fail with
+# RuntimePreparationFailed (PermissionDenied).
+preview:
+  - PerTemplateSnapshotLocation
+ateApi:
+  authorization:
+    bootstrapOwners:
+      - spiffe://cluster.local/ns/kagent/sa/kagent-controller
 postgres:
   ownerRole: substrate_owner
   readWriteRole: substrate_readwrite
