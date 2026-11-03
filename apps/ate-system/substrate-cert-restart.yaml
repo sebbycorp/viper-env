@@ -1,0 +1,87 @@
+# Workaround: the Substrate control plane loads its 24h kubelet PodCertificates
+# (servicedns/podidentity.podcert.ate.dev) at startup and never reloads them.
+# Kubelet rotates the files, but once the in-memory certs expire:
+#   - atenet-router: ResumeActor to ate-api-server fails with
+#     "received fatal alert: CertificateExpired", so no session starts;
+#   - atenet-egress: actor identity check fails, so every model/tool call
+#     from an agent gets "egress gateway rejected CONNECT with 403".
+# Restart every ate-system Deployment every 12h so they always hold valid certs
+# (api-server, controller and credential-provider mount the same certs). The
+# atelet DaemonSet and kagent workers were fine without a restart. Drop this
+# once Substrate hot-reloads pod certificates.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: substrate-cert-restarter
+  namespace: ate-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: substrate-cert-restarter
+  namespace: ate-system
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames:
+      - ate-api-server
+      - ate-controller
+      - atenet-egress
+      - atenet-router
+      - k8s-credential-provider
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: substrate-cert-restarter
+  namespace: ate-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: substrate-cert-restarter
+subjects:
+  - kind: ServiceAccount
+    name: substrate-cert-restarter
+    namespace: ate-system
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: substrate-cert-restart
+  namespace: ate-system
+spec:
+  schedule: "0 */12 * * *"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      ttlSecondsAfterFinished: 86400
+      template:
+        spec:
+          serviceAccountName: substrate-cert-restarter
+          restartPolicy: OnFailure
+          containers:
+            - name: kubectl
+              image: registry.k8s.io/kubectl:v1.36.2
+              command:
+                - kubectl
+                - -n
+                - ate-system
+              args:
+                - rollout
+                - restart
+                - deployment/ate-api-server
+                - deployment/ate-controller
+                - deployment/atenet-egress
+                - deployment/atenet-router
+                - deployment/k8s-credential-provider
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 64Mi

@@ -1,0 +1,7 @@
+# Synced by the omni-viper ApplicationSet into namespace ate-system.
+# Agent Substrate itself is a Helm release here; this dir only adds workarounds
+# on top of it.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - substrate-cert-restart.yaml
