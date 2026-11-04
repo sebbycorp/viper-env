@@ -1,0 +1,58 @@
+# GitHub MCP for agents that publish reports to sebbycorp/agent-summary.
+#
+# The controller needs the token to discover tools, so the RemoteMCPServer reads
+# Authorization from the Secret (headersFrom). Agents that reference
+# allow-github-mcp may reach ONLY that origin, and their templates allow-list
+# only the file tools.
+#
+# Vault: secret/lab/github (GH_TOKEN). Policy viper-eso was extended to read it.
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: github-agent-summary
+  namespace: kagent
+  labels:
+    app.kubernetes.io/part-of: viper-env
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: vault-lab}
+  target:
+    name: github-agent-summary
+    creationPolicy: Owner
+    template:
+      data:
+        token: "{{ .token }}"
+        authorization: "Bearer {{ .token }}"
+  data:
+  - secretKey: token
+    remoteRef: {key: lab/github, property: GH_TOKEN}
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: RemoteMCPServer
+metadata:
+  name: github-mcp
+  namespace: kagent
+  labels:
+    app.kubernetes.io/part-of: viper-env
+spec:
+  description: "GitHub's hosted MCP server (repos + pull_requests toolsets) - publishes reports to sebbycorp/agent-summary and reads upstream projects."
+  protocol: STREAMABLE_HTTP
+  url: https://api.githubcopilot.com/mcp/
+  timeout: 60s
+  headersFrom:
+  - name: X-MCP-Toolsets       # repos + pull_requests; each agent template allow-lists its own tools
+    value: repos,pull_requests
+  - name: Authorization        # kagent resolves this from the Secret (controller + runtime)
+    valueFrom: {type: Secret, name: github-agent-summary, key: authorization}
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: EgressPolicy
+metadata:
+  name: allow-github-mcp
+  namespace: kagent
+  labels:
+    app.kubernetes.io/part-of: viper-env
+spec:
+  destinations:
+  - origin: https://api.githubcopilot.com

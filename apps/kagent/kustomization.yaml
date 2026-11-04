@@ -17,3 +17,8 @@ resources:
   - agent-codex-coder.yaml
   - dgx-spark.yaml
   - ui-nodeport.yaml
+  - agent-cve-watchers.yaml
+  - github-mcp.yaml
+  - agent-summary-auditor.yaml
+  - agent-oss-update-watcher.yaml
+  - agent-redteam-posture.yaml

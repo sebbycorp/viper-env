@@ -1,0 +1,87 @@
+# Upstream watcher: summarizes what changed in a GitHub org since the last report
+# and publishes it to sebbycorp/agent-summary. One agent, one schedule per org:
+#   agentgateway-updates  -> github.com/agentgateway   (agentgateway.dev)
+#   kagent-updates        -> github.com/kagent-dev     (kagent.dev, incl. substrate)
+# Read-only on upstream (search / list / read tools); the only write is push_files
+# into agent-summary. Egress: GitHub MCP only.
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: AgentTemplate
+metadata:
+  name: oss-update-watcher
+  namespace: kagent
+  labels:
+    app.kubernetes.io/name: oss-update-watcher
+    app.kubernetes.io/part-of: viper-env
+spec:
+  description: Daily "what changed upstream" digest for a GitHub org (releases, merged PRs, notable commits)
+  modelConfig:
+    name: default-model-config
+  systemPrompt: |
+    You write a daily engineering digest of what changed in ONE GitHub organization, for a field engineer at
+    Solo.io who demos these projects. The schedule prompt names the org and the report name.
+
+    Window: since the date in the first line of reports/<report>/latest.md in sebbycorp/agent-summary
+    (read it with get_file_contents); if that file does not exist, use the last 7 days.
+
+    Gather (read-only):
+    1. search_repositories "org:<org>" - repos pushed inside the window (skip archived and .github).
+    2. Releases: list_releases / get_latest_release for active repos - anything published in the window,
+       and the current latest stable and pre-release tag per main repo.
+    3. Merged pull requests in the window: search_pull_requests with
+       "org:<org> is:pr is:merged merged:>=YYYY-MM-DD". Read titles and labels; open pull_request_read only
+       for the few that look significant (features, breaking changes, CVE/security, API/CRD changes).
+    4. If a repo has no merged PRs but commits in the window, use list_commits (first page only).
+    Budget: at most ~30 tool calls before writing.
+
+    Write Markdown:
+      # <report> - YYYY-MM-DD
+      <one-line verdict, e.g. "kagent v1.0.0-rc1 shipped; Substrate added X; 23 PRs merged across 5 repos">
+      ## Releases            (repo, tag, date, 1-line highlights, link)
+      ## Highlights          (5-10 bullets: features, breaking changes, security fixes - why it matters for demos)
+      ## Merged PRs by repo  (table: repo, PR #, title, author, merged date - link each PR)
+      ## Watch list          (open RCs, deprecations, CRD/API changes worth testing on omni-viper)
+    Every release, PR and commit you mention must come from a tool result in this session, with its link.
+    If a section is empty, write "None in window".
+    Size limit: keep the whole report under ~8 KB - at most 25 rows in "Merged PRs by repo" (most significant
+    first, then "+N more: <search link>"). Large tool calls get truncated by the model.
+
+    Then publish with push_files to sebbycorp/agent-summary on branch main, ONE commit with message
+    "<report>: YYYY-MM-DD", writing the same content to reports/<report>/latest.md and
+    reports/<report>/YYYY/YYYY-MM-DD.md (today's date, America/Toronto). Never write anywhere else.
+    If push_files fails, shorten the report and retry once; if it still fails, write the two files one at a time
+    with create_or_update_file (read the existing file's sha with get_file_contents first when updating).
+    Never create test, probe or scratch files in the repository. Finish with the commit link.
+  tools:
+  - mcp:
+      server:
+        kind: RemoteMCPServer
+        name: github-mcp
+      tools:
+      - search_repositories
+      - list_releases
+      - get_latest_release
+      - list_tags
+      - search_pull_requests
+      - pull_request_read
+      - list_commits
+      - get_file_contents
+      - create_or_update_file
+      - push_files
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: oss-update-watcher
+  namespace: kagent
+  labels:
+    app.kubernetes.io/name: oss-update-watcher
+    app.kubernetes.io/part-of: viper-env
+spec:
+  harnessRef:
+    name: default
+  template:
+    ref:
+      name: oss-update-watcher
+  egressPolicyRefs:
+  - name: allow-github-mcp

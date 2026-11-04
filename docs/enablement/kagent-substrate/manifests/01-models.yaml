@@ -1,0 +1,67 @@
+# Step 1 - Models. A ModelConfig is "which LLM, at which URL, with which key".
+# Three patterns, all verified on omni-viper (kagent Enterprise 1.0.0-alpha12):
+#   A. Self-hosted, called directly (DGX Spark / vLLM, OpenAI-compatible)
+#   B. SaaS model through agentgateway (OpenAI) - the gateway holds the real key
+#   C. Bedrock Claude through agentgateway - gateway translates Chat Completions -> Bedrock
+# Every object carries demo=substrate-enablement so cleanup is one label selector.
+---
+# A. DGX Spark, direct. vLLM speaks the OpenAI API, so provider is OpenAI with a baseUrl.
+# Gotcha: kagent rejects a bare IP in baseUrl ("credential injection requires an exact
+# DNS hostname"), so the Spark is fronted by Service kagent/dgx-spark (selectorless
+# Service + EndpointSlice -> 172.16.10.173:8000, see apps/kagent/dgx-spark.yaml).
+apiVersion: api.kagent.dev/v1alpha3
+kind: ModelConfig
+metadata:
+  name: demo-spark-qwen
+  namespace: kagent
+  labels: {demo: substrate-enablement}
+spec:
+  provider: OpenAI
+  model: qwen3.8-flash-next
+  stream: true
+  # vLLM ignores the key, but kagent wants a Secret; this one holds a placeholder.
+  apiKeySecret: kagent-spark-openai
+  apiKeySecretKey: OPENAI_API_KEY
+  openAI:
+    apiFormat: chatCompletions
+    baseUrl: http://dgx-spark.kagent.svc.cluster.local:8000/v1
+---
+# B. OpenAI via agentgateway. Route /openai -> AgentgatewayBackend "openai"
+# (policies.auth.secretRef: openai-secret). The agent never sees the real key:
+# we pass the same placeholder Secret and the gateway injects Authorization.
+# Bonus: every call shows up in the Solo UI with tokens + cost.
+apiVersion: api.kagent.dev/v1alpha3
+kind: ModelConfig
+metadata:
+  name: demo-openai-gpt-4o-mini
+  namespace: kagent
+  labels: {demo: substrate-enablement}
+spec:
+  provider: OpenAI
+  model: gpt-4o-mini            # the /openai backend does not pin a model, so this is honoured
+  stream: true
+  apiKeySecret: kagent-spark-openai
+  apiKeySecretKey: OPENAI_API_KEY
+  openAI:
+    apiFormat: chatCompletions  # use "responses" for the Codex harness
+    baseUrl: http://agentgateway-proxy.agentgateway-system.svc.cluster.local:8080/openai/v1
+---
+# C. Bedrock Claude Haiku 4.5 via the bedrock-proxy Gateway. The route
+# /claude-haiku-4-5 pins model us.anthropic.claude-haiku-4-5-20251001-v1:0 in
+# us-east-2 and signs with bedrock-secret. kagent talks plain OpenAI Chat
+# Completions; agentgateway translates to Bedrock Converse.
+apiVersion: api.kagent.dev/v1alpha3
+kind: ModelConfig
+metadata:
+  name: demo-bedrock-claude-haiku
+  namespace: kagent
+  labels: {demo: substrate-enablement}
+spec:
+  provider: OpenAI
+  model: claude-haiku-4-5       # informational - the gateway route pins the real model ID
+  stream: true
+  apiKeySecret: kagent-spark-openai
+  apiKeySecretKey: OPENAI_API_KEY
+  openAI:
+    apiFormat: chatCompletions
+    baseUrl: http://bedrock-proxy.agentgateway-system.svc.cluster.local:8080/claude-haiku-4-5
