@@ -1,0 +1,29 @@
+# Step 2 - AgentTemplate: the portable "what the agent is".
+# Prompt + model + tools (+ skills / sub-agents / output schema).
+# It says nothing about WHERE or HOW it runs - that is the Harness (step 3).
+apiVersion: api.kagent.dev/v1alpha3
+kind: AgentTemplate
+metadata:
+  name: demo-k8s-helper
+  namespace: kagent
+  labels: {demo: substrate-enablement}
+spec:
+  description: Read-only Kubernetes helper used in the Agent Substrate enablement demo
+  modelConfig:
+    name: demo-spark-qwen        # swap to demo-openai-gpt-4o-mini / demo-bedrock-claude-haiku live
+  systemPrompt: |
+    You are a read-only Kubernetes helper for cluster omni-viper.
+    You run inside a gVisor sandbox on Agent Substrate.
+    Always call a tool instead of guessing cluster state. If a tool fails, say so.
+    Never change anything: if asked to, reply with the kubectl command an operator could run.
+    Never print Secret values. Keep answers short: a small table beats prose.
+  tools:
+  - mcp:
+      server:
+        kind: RemoteMCPServer      # kagent's built-in tool server (kagent-tools)
+        name: kagent-tool-server
+      tools:                       # allow-list: only these tools are exposed to the model
+      - k8s_get_resources
+      - k8s_describe_resource
+      - k8s_get_events
+      - k8s_get_pod_logs

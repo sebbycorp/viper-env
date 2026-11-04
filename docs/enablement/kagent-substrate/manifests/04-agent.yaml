@@ -1,0 +1,16 @@
+# Step 4 - Agent: pairs ONE AgentTemplate (behaviour) with ONE Harness (runtime).
+# On apply, kagent resolves both, Substrate boots the runtime in a worker, and
+# takes a "golden snapshot". Every chat session forks from that snapshot -> fast
+# cold start, full isolation per session.
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: demo-k8s-helper
+  namespace: kagent
+  labels: {demo: substrate-enablement}
+spec:
+  harnessRef:
+    name: demo
+  template:
+    ref:
+      name: demo-k8s-helper

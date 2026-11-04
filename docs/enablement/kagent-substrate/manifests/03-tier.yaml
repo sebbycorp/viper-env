@@ -1,0 +1,50 @@
+# Step 3 - The runtime side: WorkerPool (Substrate) + Harness (kagent).
+#
+#   WorkerPool  = N pre-warmed gVisor sandbox workers (ate.dev, Agent Substrate)
+#   Harness     = which agent runtime image runs in them (kagent ADK, Codex, Claude, BYO)
+#                 + which WorkerPool + where session snapshots go
+#
+# Substrate has no priority queue: one Harness -> exactly one WorkerPool, so a
+# "tier" (default / high / coding / demo) is simply a Harness with its own pool.
+---
+apiVersion: ate.dev/v1alpha1
+kind: WorkerPool
+metadata:
+  name: kagent-demo
+  namespace: kagent
+  labels:
+    demo: substrate-enablement
+    kagent.dev/worker-pool-name: kagent-demo
+    kagent.dev/worker-pool-namespace: kagent
+spec:
+  # 2+ workers: on a Harness/template change the new golden snapshot is prepared
+  # on one worker while the old revision still holds the other.
+  replicas: 2
+  sandboxClasses:                # Substrate 0.6 (was spec.sandboxClass in 0.5)
+  - name: gvisor                 # or microvm
+    configRef:
+      name: gvisor-default
+  # Must match the Substrate control-plane version (0.6.0-b15382d4 here).
+  workerImage: us-docker.pkg.dev/solo-public/substrate-enterprise/ateworker-gvisor:v0.6.0-b15382d4
+  template:
+    serviceAccountName: kagent-default
+    labels:
+      demo: substrate-enablement
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Harness
+metadata:
+  name: demo
+  namespace: kagent
+  labels: {demo: substrate-enablement}
+spec:
+  kagent: {}                     # runtime flavour: kagent | codex | claude | byo
+  substrate:
+    workerPoolRef:
+      name: kagent-demo
+    snapshotPolicy:              # sessions are checkpointed here and restored on return
+      location: s3://ate-snapshots/kagent/demo
+  workload:
+    # Runtime image must match the controller's runtime CONTRACT, not its version:
+    # kagent Enterprise 1.0.0-alpha12 <-> OSS golang-adk 1.0.0-alpha17. Pin by digest.
+    image: ghcr.io/kagent-dev/kagent/golang-adk:1.0.0-alpha17@sha256:d20d411759d7bb549f00b7d6e8d669b91694aeb57dce847dcd2cbb68aa0d45f3

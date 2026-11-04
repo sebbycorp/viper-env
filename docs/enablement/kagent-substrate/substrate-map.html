@@ -1,0 +1,847 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"></head><body>
+<title>Agent Substrate Map</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a network-topology canvas (Build band over Run band) with an inspector rail; stacks on phones. */
+:root{
+  --bg:#0c1417; --panel:#111c20; --raise:#16242a; --grid:#1a2a30; --line:#29404a;
+  --fg:#dce7e9; --muted:#86a0a6; --faint:#4d646b;
+  --build:#f0a95c; --run:#4ccfc0; --model:#b7a2e6; --edge:#ff8a73; --ok:#7fd69a;
+  --display:"Barlow Condensed","Arial Narrow",system-ui,sans-serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  /* motion: strong ease-out for responses, ease-in-out for on-screen travel */
+  --ease-out:cubic-bezier(0.23,1,0.32,1);
+  --ease-in-out:cubic-bezier(0.77,0,0.175,1);
+  --press:160ms;
+  color-scheme:dark;
+}
+@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){
+  --bg:#eef3f2; --panel:#ffffff; --raise:#f5f8f8; --grid:#dbe5e4; --line:#b9cac9;
+  --fg:#13232a; --muted:#52676d; --faint:#9aaeb1;
+  --build:#b3610f; --run:#0b8478; --model:#6b4fb8; --edge:#c84a33; --ok:#2c8a4a; color-scheme:light}}
+:root[data-theme="light"]{
+  --bg:#eef3f2; --panel:#ffffff; --raise:#f5f8f8; --grid:#dbe5e4; --line:#b9cac9;
+  --fg:#13232a; --muted:#52676d; --faint:#9aaeb1;
+  --build:#b3610f; --run:#0b8478; --model:#6b4fb8; --edge:#c84a33; --ok:#2c8a4a; color-scheme:light}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:14px;line-height:1.5}
+.wrap{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 32px;max-width:1680px;margin:0 auto;display:grid;gap:16px}
+header{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px 24px}
+h1{font-family:var(--display);font-weight:700;font-size:clamp(28px,4vw,40px);letter-spacing:.01em;line-height:1;margin:0;text-wrap:balance}
+h1 span{color:var(--run)}
+.meta{font-family:var(--mono);font-size:12px;color:var(--muted);display:flex;flex-wrap:wrap;gap:6px 14px}
+.meta b{color:var(--fg);font-weight:500}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok);margin-right:6px;box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 25%,transparent)}
+.bar{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font:500 12px var(--body);border:1px solid var(--line);background:var(--panel);color:var(--muted);padding:5px 10px;border-radius:999px;cursor:pointer;display:inline-flex;gap:7px;align-items:center;transition:transform var(--press) var(--ease-out),color 150ms ease,border-color 150ms ease}
+.chip:active,.btn:active{transform:scale(.97)}
+.chip[aria-pressed="true"]{color:var(--fg);border-color:var(--fg)}
+.chip i{width:16px;height:0;border-top:2px solid currentColor;display:inline-block}
+.chip i.dash{border-top-style:dashed}
+.chip:focus-visible,.btn:focus-visible,select:focus-visible,.node:focus-visible{outline:2px solid var(--run);outline-offset:2px}
+.trace{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.trace label{font:600 13px var(--display);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+select{font:500 13px var(--mono);background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px 8px}
+.btn{font:600 13px var(--body);background:var(--run);color:var(--bg);border:0;border-radius:6px;padding:7px 14px;cursor:pointer;transition:transform var(--press) var(--ease-out),filter 150ms ease}
+@media (hover:hover) and (pointer:fine){.btn:hover{filter:brightness(1.08)}.chip:hover{color:var(--fg)}}
+.btn .lbl{display:inline-block;transition:filter 200ms ease,opacity 200ms ease}
+.btn .lbl.swap{filter:blur(2px);opacity:.6}
+.btn.build{background:var(--build);color:var(--bg)}
+.sep{width:1px;height:22px;background:var(--line);margin:0 4px}
+.btn:disabled{opacity:.4;cursor:default}
+.btn.ghost{background:transparent;color:var(--muted);border:1px solid var(--line)}
+.main{display:grid;grid-template-columns:minmax(0,1fr) 420px;gap:16px;align-items:start}
+@media (max-width:1100px){.main{grid-template-columns:minmax(0,1fr)}}
+.canvas{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow-x:auto;min-width:0}
+.canvas svg{display:block;width:100%;min-width:980px;height:auto}
+.inspector{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px;display:grid;gap:14px;min-width:0;position:sticky;top:calc(env(safe-area-inset-top,0px) + 12px);max-height:calc(100vh - 24px);overflow:auto}
+@media (max-width:1100px){.inspector{position:static;max-height:none}}
+.k-eyebrow{font:600 12px var(--display);letter-spacing:.12em;text-transform:uppercase}
+.inspector h2{font-family:var(--display);font-weight:700;font-size:26px;line-height:1.05;margin:2px 0 0;word-break:break-word}
+.api{font-family:var(--mono);font-size:12px;color:var(--muted)}
+.blurb{margin:0;color:var(--fg)}
+.facts{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 12px;margin:0;font-size:13px}
+.facts dt{color:var(--muted)}
+.facts dd{margin:0;font-family:var(--mono);font-size:12px;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.inspector h3{font:600 13px var(--display);letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:4px 0 0}
+.opts{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.opts li{display:grid;gap:1px;padding-left:10px;border-left:2px solid var(--line)}
+.opts code{font-family:var(--mono);font-size:12px;color:var(--fg)}
+.opts span{font-size:13px;color:var(--muted)}
+.snip{position:relative}
+.snip pre{margin:0;background:var(--raise);border:1px solid var(--line);border-radius:8px;padding:12px;font:12px/1.55 var(--mono);overflow-x:auto;color:var(--fg)}
+.snip .btn{position:absolute;top:6px;right:6px;padding:3px 8px;font-size:11px}
+/* ---- Build guide wizard (top) ---- */
+.wizard{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px 20px;display:grid;gap:18px;min-width:0}
+.wiz-top{display:flex;justify-content:space-between;align-items:flex-end;gap:12px 20px;flex-wrap:wrap}
+.wiz-title{font:700 22px/1 var(--display);letter-spacing:.02em;color:var(--fg)}
+.wiz-sub{font-size:13px;color:var(--muted);margin-top:4px}
+.wiz-actions{display:flex;gap:8px;flex-wrap:wrap}
+.stepper-wrap{overflow-x:auto;margin:0 -4px;padding:2px 4px 4px;scrollbar-width:thin}
+.stepper{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(9,minmax(0,1fr));min-width:760px;position:relative}
+.stepper::before,.stepper::after{content:"";position:absolute;top:15px;left:calc(100%/18);right:calc(100%/18);height:2px;border-radius:2px;background:var(--line)}
+.stepper::after{background:var(--build);transform-origin:left;transform:scaleX(var(--progress,0));transition:transform 320ms var(--ease-out)}
+.stepper li{position:relative;z-index:1}
+.stepper button{display:grid;justify-items:center;align-content:start;gap:7px;width:100%;text-wrap:balance;background:none;border:0;cursor:pointer;color:var(--muted);font:500 12px/1.25 var(--body);padding:0 4px 2px;text-align:center;
+  transition:color 150ms ease}
+.stepper .dot{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;font:600 12px var(--mono);background:var(--panel);color:var(--muted);border:1.5px solid var(--line);
+  transition:background-color 200ms ease,border-color 200ms ease,color 200ms ease,box-shadow 200ms ease,transform var(--press) var(--ease-out)}
+.stepper button:active .dot{transform:scale(.94)}
+@media (hover:hover) and (pointer:fine){.stepper button:hover{color:var(--fg)}.stepper button:hover .dot{border-color:var(--build)}}
+.stepper li.done .dot{background:color-mix(in srgb,var(--build) 18%,var(--panel));border-color:var(--build);color:var(--fg)}
+.stepper li.done button{color:var(--fg)}
+.stepper li.cur .dot{background:var(--build);border-color:var(--build);color:var(--bg);box-shadow:0 0 0 5px color-mix(in srgb,var(--build) 20%,transparent)}
+.stepper li.cur button{color:var(--fg);font-weight:600}
+.stepper button:focus-visible{outline:none}.stepper button:focus-visible .dot{outline:2px solid var(--run);outline-offset:2px}
+.wiz-body{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:20px 28px;align-items:start}
+@media (max-width:980px){.wiz-body{grid-template-columns:minmax(0,1fr)}}
+.wiz-text{display:grid;gap:12px;min-width:0}
+.wiz-meta{display:flex;gap:6px;font:600 12px var(--display);letter-spacing:.1em;text-transform:uppercase;color:var(--build)}
+.wiz-text h2{font:700 32px/1.02 var(--display);margin:0;text-wrap:balance}
+.wiz-text .blurb{max-width:62ch;font-size:14px;line-height:1.6}
+.check{border:1px solid var(--line);border-radius:9px;background:var(--raise);overflow:hidden}
+.check-head{display:flex;justify-content:space-between;align-items:center;padding:6px 8px 6px 12px;border-bottom:1px solid var(--line);font:600 10px var(--display);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.check-head .btn{padding:3px 9px;font-size:11px}
+.check pre{margin:0;padding:10px 12px;font:12px/1.55 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;color:var(--fg)}
+.gotcha{display:grid;gap:3px;border-left:3px solid var(--edge);background:color-mix(in srgb,var(--edge) 9%,transparent);border-radius:0 8px 8px 0;padding:10px 12px;font-size:13px;line-height:1.5}
+.gotcha b{font:600 10px var(--display);letter-spacing:.12em;text-transform:uppercase;color:var(--edge)}
+.wiz-body .file pre.yaml{max-height:520px}
+.fh-actions{display:flex;align-items:center;gap:8px;flex:none}
+.seg{display:inline-grid;grid-auto-flow:column;gap:2px;padding:2px;background:var(--raise);border:1px solid var(--line);border-radius:7px}
+.seg button{font:600 11px var(--body);border:0;background:transparent;color:var(--muted);padding:3px 9px;border-radius:5px;cursor:pointer;white-space:nowrap;
+  transition:color 150ms ease,background-color 150ms ease,transform var(--press) var(--ease-out)}
+.seg button[aria-checked="true"]{background:var(--panel);color:var(--fg);box-shadow:0 0 0 1px var(--line)}
+.seg button:active{transform:scale(.97)}
+.seg button:focus-visible{outline:2px solid var(--run);outline-offset:1px}
+@media (hover:hover) and (pointer:fine){.seg button[aria-checked="false"]:hover{color:var(--fg)}}
+.file-foot{border-top:1px solid var(--line);padding:7px 12px;font-size:11px;color:var(--muted);background:var(--panel)}
+.file-foot code{font:11px var(--mono);color:var(--fg)}
+@media (max-width:520px){.file-head{flex-wrap:wrap}.fh-actions{width:100%;justify-content:space-between}}
+.wopts{border:1px solid var(--line);border-radius:9px;background:var(--raise)}
+.wopts summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;padding:8px 12px;font:600 10px var(--display);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);
+  transition:color 150ms ease}
+.wopts summary::-webkit-details-marker{display:none}
+.wopts summary::after{content:"";margin-left:auto;width:7px;height:7px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg);transition:transform 200ms var(--ease-out)}
+.wopts[open] summary::after{transform:rotate(225deg)}
+.wopts summary b{font:600 12px var(--mono);letter-spacing:0;text-transform:none;color:var(--fg)}
+.wopts summary em{font:500 11px var(--mono);font-style:normal;letter-spacing:0;color:var(--muted);background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:0 6px}
+@media (hover:hover) and (pointer:fine){.wopts summary:hover{color:var(--fg)}}
+.wopts .opts{padding:2px 12px 12px;gap:7px}
+/* every grid child in the inspector may shrink: long code must never widen the panel */
+.inspector>*,#pane,#pane>*,.cfg,.cfg>*{min-width:0}
+#pane{display:grid;gap:14px;grid-template-columns:minmax(0,1fr)}
+.tabs{display:grid;grid-template-columns:1fr 1fr;gap:2px;padding:3px;background:var(--raise);border:1px solid var(--line);border-radius:9px}
+.tab{font:600 12px var(--body);letter-spacing:.01em;padding:7px 10px;border:0;background:transparent;color:var(--muted);border-radius:6px;cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap;
+  transition:color 150ms ease,background-color 150ms ease,box-shadow 150ms ease,transform var(--press) var(--ease-out)}
+@media (hover:hover) and (pointer:fine){.tab:not([aria-selected="true"]):not(:disabled):hover{color:var(--fg)}}
+.tab[aria-selected="true"]{background:var(--panel);color:var(--fg);box-shadow:0 0 0 1px var(--line),0 1px 2px rgb(0 0 0 / .18)}
+.tab:active:not(:disabled){transform:scale(.97)}
+.tab:disabled{opacity:.45;cursor:default}
+.tab:focus-visible{outline:2px solid var(--run);outline-offset:1px}
+.tab .live{width:6px;height:6px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 22%,transparent)}
+.tab .count{font:500 11px var(--mono);color:var(--muted)}
+.cfg{display:grid;gap:16px}
+.file{border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--raise)}
+.file-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 8px 8px 12px;border-bottom:1px solid var(--line);background:var(--panel)}
+.file-name{display:flex;flex-direction:column;min-width:0;gap:1px}
+.file-name .kind{font:600 10px var(--display);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.file-name b{font:500 13px var(--mono);color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file-head .btn{padding:4px 10px;font-size:11px;flex:none}
+pre.yaml{margin:0;border:0;border-radius:0;background:transparent;padding:10px 12px 12px 0;font:12px/1.6 var(--mono);color:var(--fg);
+  white-space:pre-wrap;overflow-wrap:anywhere;max-height:min(60vh,620px);overflow:auto;counter-reset:ln;tab-size:2}
+.yaml .l{display:block;position:relative;padding-left:3.4em}
+.yaml .l::before{counter-increment:ln;content:counter(ln);position:absolute;left:0;width:2.4em;text-align:right;color:var(--faint);font-variant-numeric:tabular-nums;user-select:none}
+.yaml .k{color:var(--build)}
+.yaml .c{color:var(--faint);font-style:italic}
+.yaml .s{color:var(--run)}
+.yaml .n{color:var(--model)}
+.yaml .d{color:var(--muted)}
+.yaml .t{color:var(--fg);opacity:.86}
+.src{font:11px var(--body);color:var(--muted);display:flex;align-items:center;gap:6px}
+.src::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--ok)}
+.cfg .hint{margin:0;font-size:12px;color:var(--faint)}
+.glist{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:4px;counter-reset:g}
+.glist li{counter-increment:g}
+.glist button{font:500 11px var(--body);border:1px solid var(--line);background:transparent;color:var(--muted);border-radius:999px;padding:3px 9px 3px 4px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;
+  transition:color 150ms ease,border-color 150ms ease,transform var(--press) var(--ease-out)}
+.glist button::before{content:counter(g);font:600 10px var(--mono);width:16px;height:16px;border-radius:50%;display:grid;place-items:center;background:var(--raise);color:var(--muted)}
+.glist button:active{transform:scale(.97)}
+.glist .done button{color:var(--fg)}
+.glist .done button::before{background:color-mix(in srgb,var(--build) 30%,transparent);color:var(--fg)}
+.glist .cur button{color:var(--fg);border-color:var(--build)}
+.glist .cur button::before{background:var(--build);color:var(--bg)}
+.facts dd.warn{color:var(--edge);font-family:var(--body);font-size:13px;word-break:normal}
+.gnav{display:flex;justify-content:space-between;gap:8px}
+.empty{font-size:13px;color:var(--muted);border:1px dashed var(--line);border-radius:9px;padding:14px;margin:0}
+.steps{list-style:none;margin:0;padding:0;display:grid;gap:6px;counter-reset:s}
+.steps li{counter-increment:s;display:grid;grid-template-columns:22px minmax(0,1fr);gap:8px;font-size:13px;color:var(--muted);transition:color 200ms ease}
+.steps li::before{content:counter(s);font:600 12px var(--mono);width:22px;height:22px;border-radius:50%;border:1px solid var(--line);display:grid;place-items:center;transform:scale(.92);transition:transform 220ms var(--ease-out),background-color 200ms ease,border-color 200ms ease,color 200ms ease}
+.steps li.on{color:var(--fg)}
+.steps li.on::before{background:var(--edge);border-color:var(--edge);color:var(--bg);transform:scale(1)}
+.steps li.now{color:var(--fg);font-weight:500}
+.hint{font-size:12px;color:var(--muted)}
+/* SVG */
+.band-title{font:700 15px var(--display);letter-spacing:.14em;text-transform:uppercase}
+.col-title{font:600 12px var(--display);letter-spacing:.12em;text-transform:uppercase;fill:var(--muted)}
+.node{cursor:pointer;transition:opacity 150ms ease}
+.node .body{transform-box:fill-box;transform-origin:center;transition:transform var(--press) var(--ease-out);
+  animation:rise 420ms var(--ease-out) backwards;animation-delay:calc(var(--i) * 26ms)}
+.node:active .body{transform:scale(.97)}
+@keyframes rise{from{opacity:.2;transform:translateY(6px)}}
+.node rect.box{fill:var(--raise);stroke:var(--line);stroke-width:1;transition:stroke 150ms ease,stroke-width 150ms ease}
+.packet{fill:var(--edge);pointer-events:none}
+.packet-halo{fill:var(--edge);opacity:.22;pointer-events:none;transform-box:fill-box;transform-origin:center}
+.node rect.tag{stroke:none}
+.node text.n{font:600 13px var(--mono);fill:var(--fg)}
+.node text.s{font:400 11px var(--body);fill:var(--muted)}
+.node.ghost rect.box{fill:transparent;stroke-dasharray:4 3}
+.node.ghost text.n{fill:var(--muted)}
+.node:hover rect.box,.node.sel rect.box{stroke:var(--fg)}
+.node.sel rect.box{stroke-width:2}
+.edge{fill:none;stroke-width:1.4;transition:opacity 150ms ease,stroke 150ms ease;animation:edgeIn 500ms ease 380ms backwards}
+@keyframes edgeIn{from{opacity:0}}
+.edge.ref{stroke:var(--faint)}
+.edge.plat{stroke:var(--faint);stroke-dasharray:2 4}
+.edge.data{stroke:var(--edge);stroke-dasharray:6 5;opacity:0}
+.edge.pol{stroke:var(--build);stroke-dasharray:2 3;opacity:0}
+svg.focus .edge.pol.hl{opacity:.9;stroke:var(--build)}
+svg.show-data .edge.data{opacity:.55}
+svg.hide-ref .edge.ref,svg.hide-plat .edge.plat{opacity:0}
+svg.focus .node{opacity:.28}
+svg.focus .edge{opacity:.08}
+svg.focus .node.hl{opacity:1}
+svg.focus .edge.hl{opacity:1;stroke:var(--fg)}
+svg.guiding .node:not(.guide){opacity:.3}
+svg.guiding .edge:not(.guide){opacity:.06}
+.node.guide rect.box{stroke:var(--build);stroke-width:2}
+.edge.guide{opacity:1!important;stroke:var(--build)!important;stroke-width:2}
+.edge.lit{opacity:1!important;stroke:var(--edge)!important;stroke-width:2.4;stroke-dasharray:7 5;animation:flow .7s linear infinite}
+.node.lit rect.box{stroke:var(--edge);stroke-width:2}
+@keyframes flow{to{stroke-dashoffset:-24}}
+@media (prefers-reduced-motion:reduce){
+  .edge.lit{animation:none}
+  .node .body{animation:fadeOnly 200ms ease backwards}
+  .node:active .body{transform:none}
+  .edge{animation:edgeIn 200ms ease backwards}
+  .steps li::before{transform:none}
+}
+@keyframes fadeOnly{from{opacity:.2}}
+.legend text{font:400 12px var(--body);fill:var(--muted)}
+.legend .lt{font:600 12px var(--display);letter-spacing:.1em;text-transform:uppercase;fill:var(--fg)}
+</style>
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Agent Substrate <span>Map</span></h1>
+      <div class="meta" style="margin-top:8px">
+        <span><span class="dot"></span>omni-viper · snapshot <b>2026-11-04</b></span>
+        <span>kagent Enterprise <b>1.0.0-alpha12</b></span>
+        <span>Substrate <b>0.6.0-b15382d4</b></span>
+        <span>8 agents · 6 schedules · 3 harnesses · 8 gVisor workers</span>
+      </div>
+    </div>
+    <div class="trace">
+      <label for="agentSel">Trace a chat</label>
+      <select id="agentSel"></select>
+      <button class="btn" id="play" type="button"><span class="lbl">Play request path</span></button>
+      <button class="btn ghost" id="stop" type="button"><span class="lbl">Clear</span></button>
+    </div>
+  </header>
+
+  <section class="wizard" id="wizard" aria-label="Build guide">
+    <div class="wiz-top">
+      <div><div class="wiz-title">Build guide</div><div class="wiz-sub">Build an agent on Agent Substrate in this order. Platform pieces first, then the agent.</div></div>
+      <div class="wiz-actions">
+        <button class="btn ghost" type="button" id="gmap"><span class="lbl">Show on map</span></button>
+        <button class="btn ghost" type="button" id="gprev"><span class="lbl">Back</span></button>
+        <button class="btn build" type="button" id="gnext"><span class="lbl">Next step</span></button>
+      </div>
+    </div>
+    <div class="stepper-wrap"><ol class="stepper" id="stepper"></ol></div>
+    <div class="wiz-body" id="wizBody" aria-live="polite"></div>
+  </section>
+
+  <div class="bar">
+    <div class="chips" role="group" aria-label="Edge layers">
+      <button class="chip" id="tRef" aria-pressed="true" type="button"><i></i>References (spec → object)</button>
+      <button class="chip" id="tPlat" aria-pressed="true" type="button"><i class="dash"></i>Platform wiring</button>
+      <button class="chip" id="tData" aria-pressed="false" type="button" style="color:var(--edge)"><i class="dash"></i>Data path</button>
+    </div>
+    <span class="hint">Hover a node to see what it connects to. Click it for options and a snippet.</span>
+  </div>
+
+  <div class="main">
+    <div class="canvas"><svg id="map" viewBox="0 0 1290 948" role="img" aria-label="Topology of kagent and Agent Substrate components on omni-viper"></svg></div>
+    <aside class="inspector" id="insp" aria-live="polite"></aside>
+  </div>
+</div>
+
+<script type="application/json" id="cfgdata">{"a-codex": [["agent/codex-coder", "apiVersion: api.kagent.dev/v1alpha3\nkind: Agent\nmetadata:\n  labels:\n    app.kubernetes.io/name: codex-coder\n    app.kubernetes.io/part-of: viper-env\n  name: codex-coder\n  namespace: kagent\nspec:\n  harnessRef:\n    name: coding\n  template:\n    ref:\n      name: codex-coder"]], "t-codex": [["agenttemplate/codex-coder", "apiVersion: api.kagent.dev/v1alpha3\nkind: AgentTemplate\nmetadata:\n  labels:\n    app.kubernetes.io/name: codex-coder\n    app.kubernetes.io/part-of: viper-env\n  name: codex-coder\n  namespace: kagent\nspec:\n  description: Codex coding agent (gpt-5.4) running in a sandboxed Agent Substrate worker\n  modelConfig:\n    name: codex-gpt-5-4\n  systemPrompt: |\n    You are a coding agent running inside a gVisor sandbox on Agent Substrate\n    (cluster omni-viper). Your working directory is /data/workspace; it is\n    checkpointed with your session and restored when the user returns.\n    Write, run and test code there. Be concise: show the files you changed\n    and the commands you ran, and say plainly when something failed."]], "a-forti": [["agent/fortigate", "apiVersion: api.kagent.dev/v1alpha3\nkind: Agent\nmetadata:\n  labels:\n    app.kubernetes.io/name: fortigate\n    app.kubernetes.io/part-of: k8s-viper-omni\n  name: fortigate\n  namespace: kagent\nspec:\n  egressPolicyRefs:\n    - name: allow-github-mcp\n  harnessRef:\n    name: default\n  template:\n    ref:\n      name: fortigate"]], "t-forti": [["agenttemplate/fortigate", "apiVersion: api.kagent.dev/v1alpha3\nkind: AgentTemplate\nmetadata:\n  labels:\n    app.kubernetes.io/name: fortigate\n    app.kubernetes.io/part-of: k8s-viper-omni\n  name: fortigate\n  namespace: kagent\nspec:\n  description: Home FortiGate assistant for fw-maniak-hq (FortiGate 80F)\n  modelConfig:\n    name: default-model-config\n  systemPrompt: |\n    You are the home FortiGate assistant for fw-maniak-hq.\n    Hardware: FortiGate 80F. FortiOS 7.4.11 build 2878. VDOM root.\n    Management API: https://172.16.10.1:443 (lab self-signed). LAN-only lab.\n\n    You run as a Go ADK declarative SandboxAgent on Agent Substrate\n    (gVisor actor, WorkerPool kagent-default) in the k8s-viper cluster.\n    Your tools are FortiOS REST wrappers (fg_*). Prefer read-only tools.\n    Never invent policy, interface, route, VPN, or DHCP state \u2014 call a tool.\n    If a tool fails or returns empty, say so. If you cannot answer, say so.\n\n    Known interfaces (do not assume they are still up \u2014 check with tools):\n    wan2 (typically up), wan1 (typically down), ntw-10, ntw-k8s,\n    ntw-internal, ntw-external.\n\n    Known policy names (ids and status change \u2014 look them up):\n    Allow-YouTube-Whitelist, Allow-YouTube-MasterBR-Night,\n    Bell Outbound Traffic, Cogeco Out, Allow_SSH_External_Access.\n\n    Writes: ask the operator to confirm before any write tool\n    (fg_create_address, fg_update_address, fg_set_policy_status,\n    fg_create_policy, fg_update_policy_comment). You can create\n    policies and addresses; you cannot delete policies, take backups,\n    or touch firmware. There is no generic \"call any API\" tool.\n\n    Never print API tokens, passwords, or Authorization headers.\n    Never claim you have a token. Secrets stay in Vault.\n  tools:\n    - mcp:\n        server:\n          kind: RemoteMCPServer\n          name: fortigate-mcp\n        tools:\n          - fg_system_status\n          - fg_resource_usage\n          - fg_list_interfaces\n          - fg_interface_stats\n          - fg_list_policies\n          - fg_get_policy\n          - fg_policy_stats\n          - fg_list_addresses\n          - fg_list_addrgrp\n          - fg_list_services\n          - fg_list_routes\n          - fg_list_static_routes\n          - fg_vpn_status\n          - fg_dhcp_leases\n          - fg_list_vips\n          - fg_log_state\n          - fg_current_admins\n          - fg_create_address\n          - fg_update_address\n          - fg_set_policy_status\n          - fg_create_policy\n          - fg_update_policy_comment\n    - mcp:\n        server:\n          kind: RemoteMCPServer\n          name: github-mcp\n        tools:\n          - get_file_contents\n          - create_or_update_file\n          - push_files"]], "a-k8s": [["agent/k8s-assistant", "apiVersion: api.kagent.dev/v1alpha3\nkind: Agent\nmetadata:\n  labels:\n    app.kubernetes.io/name: k8s-assistant\n    app.kubernetes.io/part-of: viper-env\n  name: k8s-assistant\n  namespace: kagent\nspec:\n  harnessRef:\n    name: default\n  template:\n    ref:\n      name: k8s-assistant"]], "t-k8s": [["agenttemplate/k8s-assistant", "apiVersion: api.kagent.dev/v1alpha3\nkind: AgentTemplate\nmetadata:\n  labels:\n    app.kubernetes.io/name: k8s-assistant\n    app.kubernetes.io/part-of: viper-env\n  name: k8s-assistant\n  namespace: kagent\nspec:\n  description: Read-only Kubernetes assistant for cluster omni-viper\n  modelConfig:\n    name: default-model-config\n  systemPrompt: |\n    You are the Kubernetes assistant for the omni-viper cluster\n    (single node talos-cyv-ekb, Talos 1.13, Kubernetes 1.36, managed by Sidero Omni on Proxmox).\n    You run as a sandboxed agent on Agent Substrate.\n\n    You are READ-ONLY. Your tools can list, get, describe, show YAML, read events and pod logs.\n    Never invent cluster state - call a tool. If a tool fails or returns nothing, say so.\n    If asked to change something (apply, delete, scale, restart, patch, exec), do not attempt it:\n    say you are read-only and give the kubectl command the operator could run.\n    Never print Secret data, tokens or credentials, even if a tool returns them.\n\n    Answers are read on an e-ink tablet: be concise. Prefer a short list or a small table\n    (name, namespace, status, age/restarts) over prose. Key namespaces: kagent, agentgateway-system,\n    ate-system, argocd, external-secrets, remarkable-diary.\n  tools:\n    - mcp:\n        server:\n          kind: RemoteMCPServer\n          name: kagent-tool-server\n        tools:\n          - k8s_get_resources\n          - k8s_describe_resource\n          - k8s_get_resource_yaml\n          - k8s_get_events\n          - k8s_get_pod_logs\n          - k8s_get_available_api_resources\n          - k8s_get_cluster_configuration"]], "a-k8sp": [["agent/k8s-assistant-priority", "apiVersion: api.kagent.dev/v1alpha3\nkind: Agent\nmetadata:\n  labels:\n    app.kubernetes.io/name: k8s-assistant-priority\n    app.kubernetes.io/part-of: viper-env\n  name: k8s-assistant-priority\n  namespace: kagent\nspec:\n  harnessRef:\n    name: high\n  template:\n    ref:\n      name: k8s-assistant-priority"]], "t-k8sp": [["agenttemplate/k8s-assistant-priority", "apiVersion: api.kagent.dev/v1alpha3\nkind: AgentTemplate\nmetadata:\n  labels:\n    app.kubernetes.io/name: k8s-assistant-priority\n    app.kubernetes.io/part-of: viper-env\n  name: k8s-assistant-priority\n  namespace: kagent\nspec:\n  description: Read-only Kubernetes assistant for cluster omni-viper (high-priority tier)\n  modelConfig:\n    name: default-model-config\n  systemPrompt: |\n    You are the Kubernetes assistant for the omni-viper cluster\n    (single node talos-cyv-ekb, Talos 1.13, Kubernetes 1.36, managed by Sidero Omni on Proxmox).\n    You run as a sandboxed agent on Agent Substrate, in its high-priority worker pool.\n\n    You are READ-ONLY. Your tools can list, get, describe, show YAML, read events and pod logs.\n    Never invent cluster state - call a tool. If a tool fails or returns nothing, say so.\n    If asked to change something (apply, delete, scale, restart, patch, exec), do not attempt it:\n    say you are read-only and give the kubectl command the operator could run.\n    Never print Secret data, tokens or credentials, even if a tool returns them.\n\n    Answers are read on an e-ink tablet: be concise. Prefer a short list or a small table\n    (name, namespace, status, age/restarts) over prose. Key namespaces: kagent, agentgateway-system,\n    ate-system, argocd, external-secrets, remarkable-diary.\n  tools:\n    - mcp:\n        server:\n          kind: RemoteMCPServer\n          name: kagent-tool-server\n        tools:\n          - k8s_get_resources\n          - k8s_describe_resource\n          - k8s_get_resource_yaml\n          - k8s_get_events\n          - k8s_get_pod_logs\n          - k8s_get_available_api_resources\n          - k8s_get_cluster_configuration"]], "a-cve": [["agent/k8s-cve-checker", "apiVersion: api.kagent.dev/v1alpha3\nkind: Agent\nmetadata:\n  labels:\n    app.kubernetes.io/name: k8s-cve-checker\n    app.kubernetes.io/part-of: viper-env\n  name: k8s-cve-checker\n  namespace: kagent\nspec:\n  egressPolicyRefs:\n    - name: allow-osv\n    - name: allow-github-mcp\n  harnessRef:\n    name: default\n  template:\n    ref:\n      name: k8s-cve-checker"]], "t-cve": [["agenttemplate/k8s-cve-checker", "apiVersion: api.kagent.dev/v1alpha3\nkind: AgentTemplate\nmetadata:\n  labels:\n    app.kubernetes.io/name: k8s-cve-checker\n    app.kubernetes.io/part-of: viper-env\n  name: k8s-cve-checker\n  namespace: kagent\nspec:\n  description: Read-only CVE checker for cluster omni-viper (Kubernetes version + container images vs OSV.dev)\n  modelConfig:\n    name: default-model-config\n  systemPrompt: |\n    You are the CVE checker for Kubernetes cluster omni-viper. You are READ-ONLY.\n\n    1. Inventory with the Kubernetes tools:\n       - the Kubernetes server version (k8s_get_cluster_configuration or node info)\n       - the container images running in namespaces kagent, ate-system, agentgateway-system,\n         argocd, external-secrets, cert-manager, kube-system (k8s_get_resources on pods, output wide/yaml).\n       Deduplicate images.\n    2. Look up vulnerabilities in OSV.dev from your bash shell. Only https://api.osv.dev is reachable.\n       Use BusyBox wget (there is no curl):\n         wget -qO- --header='Content-Type: application/json' \\\n           --post-data='{\"package\":{\"name\":\"k8s.io/kubernetes\",\"ecosystem\":\"Go\"},\"version\":\"1.36.4\"}' \\\n           https://api.osv.dev/v1/query\n       Kubernetes itself: ecosystem Go, package k8s.io/kubernetes, version without the leading \"v\".\n       For images built from Go projects you can identify (e.g. argo-cd, cert-manager, external-secrets),\n       query their Go module at the image tag version. Skip images you cannot map to a package and say so.\n       Keep only the id, aliases (CVE-\u2026), summary and severity fields - do not dump whole responses.\n    3. Report:\n       - a one-line verdict (clean / review / action needed)\n       - a table: component, version, CVE / advisory id, severity, fixed version (if given)\n       - a short \"not checked\" list for images you could not map\n    Never invent CVEs: every row must come from an OSV response in this session. If OSV is unreachable,\n    say so. Never change anything in the cluster and never print Secret data.\n  tools:\n    - mcp:\n        server:\n          kind: RemoteMCPServer\n          name: kagent-tool-server\n        tools:\n          - k8s_get_resources\n          - k8s_get_resource_yaml\n          - k8s_get_cluster_configuration\n          - k8s_get_available_api_resources\n    - mcp:\n        server:\n          kind: RemoteMCPServer\n          name: github-mcp\n        tools:\n          - get_file_contents\n          - create_or_update_file\n          - push_files"]], "a-fgcve": [["agent/fortigate-cve-watch", "apiVersion: api.kagent.dev/v1alpha3\nkind: Agent\nmetadata:\n  labels:\n    app.kubernetes.io/name: fortigate-cve-watch\n    app.kubernetes.io/part-of: viper-env\n  name: fortigate-cve-watch\n  namespace: kagent\nspec:\n  egressPolicyRefs:\n    - name: allow-fortiguard\n    - name: allow-github-mcp\n  harnessRef:\n    name: default\n  template:\n    ref:\n      name: fortigate-cve-watch"]], "t-fgcve": [["agenttemplate/fortigate-cve-watch", "apiVersion: api.kagent.dev/v1alpha3\nkind: AgentTemplate\nmetadata:\n  labels:\n    app.kubernetes.io/name: fortigate-cve-watch\n    app.kubernetes.io/part-of: viper-env\n  name: fortigate-cve-watch\n  namespace: kagent\nspec:\n  description: Matches the FortiGate's FortiOS / FortiAP versions against FortiGuard PSIRT advisories and Outbreak Alerts\n  modelConfig:\n    name: default-model-config\n  systemPrompt: |\n    You are the FortiGuard CVE watch for firewall fw-maniak-hq (FortiGate 80F). You are READ-ONLY:\n    you only have status tools and must never change the firewall.\n\n    1. Get the facts with tools: fg_system_status (model, FortiOS version/build).\n       The managed FortiAPs run FortiAP firmware (e.g. FP231F v7.4.x) - include it if the user context mentions it.\n    2. Fetch FortiGuard feeds from your bash shell with BusyBox wget (no curl). Only\n       https://filestore.fortinet.com and https://fortiguard.fortinet.com are reachable.\n         PSIRT advisories (CVE fixes): wget -qO- https://filestore.fortinet.com/fortiguard/rss/ir.xml\n         Outbreak Alerts (the https://fortiguard.fortinet.com/outbreak-alert page):\n                                       wget -qO- https://filestore.fortinet.com/fortiguard/rss/outbreakalert.xml\n       The feeds are RSS XML: split on <item>, keep title, link, pubDate and description.\n       Use grep/sed to filter - do not print whole feeds.\n    3. Keep items from the last 30 days that mention FortiOS, FortiGate, FortiAP or FortiProxy SSL-VPN,\n       plus any Outbreak Alert about Fortinet products. For each, decide whether the running version is\n       affected when the advisory text says so (\"affected: FortiOS 7.4.0 through 7.4.x\"); if the feed\n       text does not say, mark it \"check advisory\" and give the link.\n    4. Report: a one-line verdict (no known exposure / review / action needed), then a table:\n       date, advisory id (FG-IR-\u2026) or alert, CVE ids, product, affects 7.4.11? (yes / no / check), link.\n    Never invent advisories or CVE ids: every row must come from a feed you fetched in this session.\n    If a feed is unreachable, say which one.\n  tools:\n    - mcp:\n        server:\n          kind: RemoteMCPServer\n          name: fortigate-mcp\n        tools:\n          - fg_system_status\n          - fg_resource_usage\n    - mcp:\n        server:\n          kind: RemoteMCPServer\n          name: github-mcp\n        tools:\n          - get_file_contents\n          - create_or_update_file\n          - push_files"]], "a-oss": [["agent/oss-update-watcher", "apiVersion: api.kagent.dev/v1alpha3\nkind: Agent\nmetadata:\n  labels:\n    app.kubernetes.io/name: oss-update-watcher\n    app.kubernetes.io/part-of: viper-env\n  name: oss-update-watcher\n  namespace: kagent\nspec:\n  egressPolicyRefs:\n    - name: allow-github-mcp\n  harnessRef:\n    name: default\n  template:\n    ref:\n      name: oss-update-watcher"]], "t-oss": [["agenttemplate/oss-update-watcher", "apiVersion: api.kagent.dev/v1alpha3\nkind: AgentTemplate\nmetadata:\n  labels:\n    app.kubernetes.io/name: oss-update-watcher\n    app.kubernetes.io/part-of: viper-env\n  name: oss-update-watcher\n  namespace: kagent\nspec:\n  description: Daily \"what changed upstream\" digest for a GitHub org (releases, merged PRs, notable commits)\n  modelConfig:\n    name: default-model-config\n  systemPrompt: |\n    You write a daily engineering digest of what changed in ONE GitHub organization, for a field engineer at\n    Solo.io who demos these projects. The schedule prompt names the org and the report name.\n\n    Window: since the date in the first line of reports/<report>/latest.md in sebbycorp/agent-summary\n    (read it with get_file_contents); if that file does not exist, use the last 7 days.\n\n    Gather (read-only):\n    1. search_repositories \"org:<org>\" - repos pushed inside the window (skip archived and .github).\n    2. Releases: list_releases / get_latest_release for active repos - anything published in the window,\n       and the current latest stable and pre-release tag per main repo.\n    3. Merged pull requests in the window: search_pull_requests with\n       \"org:<org> is:pr is:merged merged:>=YYYY-MM-DD\". Read titles and labels; open pull_request_read only\n       for the few that look significant (features, breaking changes, CVE/security, API/CRD changes).\n    4. If a repo has no merged PRs but commits in the window, use list_commits (first page only).\n    Budget: at most ~30 tool calls before writing.\n\n    Write Markdown:\n      # <report> - YYYY-MM-DD\n      <one-line verdict, e.g. \"kagent v1.0.0-rc1 shipped; Substrate added X; 23 PRs merged across 5 repos\">\n      ## Releases            (repo, tag, date, 1-line highlights, link)\n      ## Highlights          (5-10 bullets: features, breaking changes, security fixes - why it matters for demos)\n      ## Merged PRs by repo  (table: repo, PR #, title, author, merged date - link each PR)\n      ## Watch list          (open RCs, deprecations, CRD/API changes worth testing on omni-viper)\n    Every release, PR and commit you mention must come from a tool result in this session, with its link.\n    If a section is empty, write \"None in window\".\n\n    Then publish with push_files to sebbycorp/agent-summary on branch main, ONE commit with message\n    \"<report>: YYYY-MM-DD\", writing the same content to reports/<report>/latest.md and\n    reports/<report>/YYYY/YYYY-MM-DD.md (today's date, America/Toronto). Never write anywhere else.\n    Finish with the commit link.\n  tools:\n    - mcp:\n        server:\n          kind: RemoteMCPServer\n          name: github-mcp\n        tools:\n          - search_repositories\n          - list_releases\n          - get_latest_release\n          - list_tags\n          - search_pull_requests\n          - pull_request_read\n          - list_commits\n          - get_file_contents\n          - push_files"]], "a-audit": [["agent/agent-summary-auditor", "apiVersion: api.kagent.dev/v1alpha3\nkind: Agent\nmetadata:\n  labels:\n    app.kubernetes.io/name: agent-summary-auditor\n    app.kubernetes.io/part-of: viper-env\n  name: agent-summary-auditor\n  namespace: kagent\nspec:\n  egressPolicyRefs:\n    - name: allow-github-mcp\n  harnessRef:\n    name: high\n  template:\n    ref:\n      name: agent-summary-auditor"]], "t-audit": [["agenttemplate/agent-summary-auditor", "apiVersion: api.kagent.dev/v1alpha3\nkind: AgentTemplate\nmetadata:\n  labels:\n    app.kubernetes.io/name: agent-summary-auditor\n    app.kubernetes.io/part-of: viper-env\n  name: agent-summary-auditor\n  namespace: kagent\nspec:\n  description: Checks that every scheduled agent report landed in sebbycorp/agent-summary today\n  modelConfig:\n    name: default-model-config\n  systemPrompt: |\n    You audit the GitHub repository sebbycorp/agent-summary (branch main). Agents publish daily reports there as\n      reports/<report>/latest.md   and   reports/<report>/YYYY/YYYY-MM-DD.md\n    Each report file starts with \"# <report> - YYYY-MM-DD\".\n\n    Expected reports (schedule time, America/Toronto):\n      agentgateway-updates  08:00   (agent oss-update-watcher)\n      kagent-updates        08:20   (agent oss-update-watcher)\n      fortigate-health  09:00   (agent fortigate)\n      k8s-cve           09:15   (agent k8s-cve-checker)\n      fortiguard-cve    09:30   (agent fortigate-cve-watch)\n    Also include any other directory you find under reports/ (except _status) as an extra report.\n\n    Steps:\n    1. Use get_file_contents to list reports/ and, for each report, read reports/<report>/latest.md.\n       Take the date from its first line. Also check that reports/<report>/YYYY/<today>.md exists.\n    2. Status per report: OK (today's file exists and latest.md is dated today), MISSING (no file for today),\n       STALE (latest.md older than today), MALFORMED (no \"# <report> - YYYY-MM-DD\" first line).\n       Copy each report's one-line verdict (the line after the heading) when present.\n    3. Write ONE commit with push_files containing reports/_status/latest.md and\n       reports/_status/YYYY/YYYY-MM-DD.md (same content), message \"_status: YYYY-MM-DD\", formatted as:\n         # _status - YYYY-MM-DD\n         <one line: \"All N reports arrived\" or \"K of N reports missing: \u2026\">\n         | Report | Schedule | Status | Report date | Verdict |\n         followed by a short \"Action\" line for each report that is not OK\n         (e.g. \"check the schedule's execution history in the kagent UI\").\n    Never modify any path outside reports/_status/, and never touch another repository.\n    Use today's date in America/Toronto. Finish with the commit link.\n  tools:\n    - mcp:\n        server:\n          kind: RemoteMCPServer\n          name: github-mcp\n        tools:\n          - get_file_contents\n          - list_commits\n          - push_files"]], "m-def": [["modelconfig/default-model-config", "apiVersion: api.kagent.dev/v1alpha3\nkind: ModelConfig\nmetadata:\n  annotations:\n    meta.helm.sh/release-name: kagent\n    meta.helm.sh/release-namespace: kagent\n  labels:\n    app.kubernetes.io/instance: kagent\n    app.kubernetes.io/managed-by: Helm\n    app.kubernetes.io/name: kagent-enterprise\n    app.kubernetes.io/part-of: kagent\n    app.kubernetes.io/version: 1.0.0-alpha12\n    helm.sh/chart: kagent-enterprise-1.0.0-alpha12\n  name: default-model-config\n  namespace: kagent\nspec:\n  apiKeySecret: kagent-spark-openai\n  apiKeySecretKey: OPENAI_API_KEY\n  model: qwen3.8-flash-next\n  openAI:\n    apiFormat: chatCompletions\n    baseUrl: http://dgx-spark.kagent.svc.cluster.local:8000/v1\n  provider: OpenAI\n  stream: true"]], "m-codex": [["modelconfig/codex-gpt-5-4", "apiVersion: api.kagent.dev/v1alpha3\nkind: ModelConfig\nmetadata:\n  labels:\n    app.kubernetes.io/part-of: viper-env\n  name: codex-gpt-5-4\n  namespace: kagent\nspec:\n  apiKeySecret: kagent-spark-openai\n  apiKeySecretKey: OPENAI_API_KEY\n  model: gpt-5.4\n  openAI:\n    apiFormat: responses\n    baseUrl: http://agentgateway-proxy.agentgateway-system.svc.cluster.local:8080/openai/v1\n  provider: OpenAI\n  stream: true"]], "mcp-k": [["remotemcpserver/kagent-tool-server", "apiVersion: api.kagent.dev/v1alpha3\nkind: RemoteMCPServer\nmetadata:\n  annotations:\n    meta.helm.sh/release-name: kagent\n    meta.helm.sh/release-namespace: kagent\n  labels:\n    app.kubernetes.io/instance: kagent\n    app.kubernetes.io/managed-by: Helm\n    app.kubernetes.io/name: kagent-enterprise\n    app.kubernetes.io/part-of: kagent\n    app.kubernetes.io/version: 1.0.0-alpha12\n    helm.sh/chart: kagent-enterprise-1.0.0-alpha12\n  name: kagent-tool-server\n  namespace: kagent\nspec:\n  description: Official KAgent tool server\n  protocol: STREAMABLE_HTTP\n  sseReadTimeout: 5m0s\n  terminateOnClose: true\n  timeout: 30s\n  url: http://kagent-tools.kagent.svc.cluster.local:8084/mcp"]], "mcp-f": [["remotemcpserver/fortigate-mcp", "apiVersion: api.kagent.dev/v1alpha3\nkind: RemoteMCPServer\nmetadata:\n  labels:\n    app.kubernetes.io/part-of: k8s-viper-omni\n  name: fortigate-mcp\n  namespace: kagent\nspec:\n  description: FortiOS REST tools for fw-maniak-hq (FortiGate 80F)\n  protocol: STREAMABLE_HTTP\n  sseReadTimeout: 5m0s\n  terminateOnClose: true\n  timeout: 30s\n  url: http://fortigate-mcp.kagent.svc.cluster.local:8084/mcp"]], "mcp-gh": [["remotemcpserver/github-mcp", "apiVersion: api.kagent.dev/v1alpha3\nkind: RemoteMCPServer\nmetadata:\n  labels:\n    app.kubernetes.io/part-of: viper-env\n  name: github-mcp\n  namespace: kagent\nspec:\n  description: GitHub's hosted MCP server (repos + pull_requests toolsets) - publishes reports to sebbycorp/agent-summary and reads upstream projects.\n  headersFrom:\n    - name: X-MCP-Toolsets\n      value: repos,pull_requests\n    - name: Authorization\n      valueFrom:\n        key: authorization\n        name: github-agent-summary\n        type: Secret\n  protocol: STREAMABLE_HTTP\n  terminateOnClose: true\n  timeout: 60s\n  url: https://api.githubcopilot.com/mcp/"], ["externalsecret/github-agent-summary", "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata:\n  annotations:\n    force-sync: \"1793798684\"\n  labels:\n    app.kubernetes.io/part-of: viper-env\n  name: github-agent-summary\n  namespace: kagent\nspec:\n  data:\n    - remoteRef:\n        key: lab/github\n        property: GH_TOKEN\n      secretKey: token\n  refreshInterval: 1h\n  secretStoreRef:\n    kind: ClusterSecretStore\n    name: vault-lab\n  target:\n    creationPolicy: Owner\n    deletionPolicy: Retain\n    name: github-agent-summary\n    template:\n      data:\n        authorization: Bearer {{ .token }}\n        token: '{{ .token }}'\n      engineVersion: v2\n      mergePolicy: Replace"]], "mcp-a": [["remotemcpserver/kagent-api", "apiVersion: api.kagent.dev/v1alpha3\nkind: RemoteMCPServer\nmetadata:\n  annotations:\n    meta.helm.sh/release-name: kagent\n    meta.helm.sh/release-namespace: kagent\n  labels:\n    app.kubernetes.io/instance: kagent\n    app.kubernetes.io/managed-by: Helm\n    app.kubernetes.io/name: kagent-enterprise\n    app.kubernetes.io/part-of: kagent\n    app.kubernetes.io/version: 1.0.0-alpha12\n    helm.sh/chart: kagent-enterprise-1.0.0-alpha12\n  name: kagent-api\n  namespace: kagent\nspec:\n  description: Kagent API tools for Sessions, checkpoints, and sandboxes\n  protocol: STREAMABLE_HTTP\n  sseReadTimeout: 5m0s\n  terminateOnClose: true\n  timeout: 30s\n  url: http://kagent-controller.kagent.svc.cluster.local:8083/mcp"]], "egp-osv": [["egresspolicy/allow-osv", "apiVersion: api.kagent.dev/v1alpha3\nkind: EgressPolicy\nmetadata:\n  labels:\n    app.kubernetes.io/part-of: viper-env\n  name: allow-osv\n  namespace: kagent\nspec:\n  destinations:\n    - origin: https://api.osv.dev"]], "egp-fg": [["egresspolicy/allow-fortiguard", "apiVersion: api.kagent.dev/v1alpha3\nkind: EgressPolicy\nmetadata:\n  labels:\n    app.kubernetes.io/part-of: viper-env\n  name: allow-fortiguard\n  namespace: kagent\nspec:\n  destinations:\n    - origin: https://filestore.fortinet.com\n    - origin: https://fortiguard.fortinet.com"]], "egp-gh": [["egresspolicy/allow-github-mcp", "apiVersion: api.kagent.dev/v1alpha3\nkind: EgressPolicy\nmetadata:\n  labels:\n    app.kubernetes.io/part-of: viper-env\n  name: allow-github-mcp\n  namespace: kagent\nspec:\n  destinations:\n    - origin: https://api.githubcopilot.com"]], "h-coding": [["harness/coding", "apiVersion: api.kagent.dev/v1alpha3\nkind: Harness\nmetadata:\n  labels:\n    app.kubernetes.io/name: coding-harness\n    app.kubernetes.io/part-of: viper-env\n  name: coding\n  namespace: kagent\nspec:\n  codex: {}\n  substrate:\n    snapshotPolicy:\n      location: s3://ate-snapshots/kagent/coding\n    workerPoolRef:\n      name: kagent-coding\n  workload:\n    image: ghcr.io/kagent-dev/kagent/codex-harness:1.0.0-alpha17@sha256:1c8565efce78c420b6726c68eaf010363fafd4eeec0c1afcd317d9e517434c22"]], "h-def": [["harness/default", "apiVersion: api.kagent.dev/v1alpha3\nkind: Harness\nmetadata:\n  labels:\n    app.kubernetes.io/name: default-harness\n    app.kubernetes.io/part-of: viper-env\n  name: default\n  namespace: kagent\nspec:\n  kagent: {}\n  substrate:\n    snapshotPolicy:\n      location: s3://ate-snapshots/kagent/default\n    workerPoolRef:\n      name: kagent-default\n  workload:\n    image: ghcr.io/kagent-dev/kagent/golang-adk:1.0.0-alpha17@sha256:d20d411759d7bb549f00b7d6e8d669b91694aeb57dce847dcd2cbb68aa0d45f3"]], "h-high": [["harness/high", "apiVersion: api.kagent.dev/v1alpha3\nkind: Harness\nmetadata:\n  labels:\n    app.kubernetes.io/name: high-harness\n    app.kubernetes.io/part-of: viper-env\n  name: high\n  namespace: kagent\nspec:\n  kagent: {}\n  substrate:\n    snapshotPolicy:\n      location: s3://ate-snapshots/kagent/high\n    workerPoolRef:\n      name: kagent-high\n  workload:\n    image: ghcr.io/kagent-dev/kagent/golang-adk:1.0.0-alpha17@sha256:d20d411759d7bb549f00b7d6e8d669b91694aeb57dce847dcd2cbb68aa0d45f3"]], "p-coding": [["workerpool/kagent-coding", "apiVersion: ate.dev/v1alpha1\nkind: WorkerPool\nmetadata:\n  labels:\n    app.kubernetes.io/part-of: viper-env\n    kagent.dev/worker-pool-name: kagent-coding\n    kagent.dev/worker-pool-namespace: kagent\n    substrate.viper-env/tier: coding\n  name: kagent-coding\n  namespace: kagent\nspec:\n  replicas: 3\n  sandboxClasses:\n    - configRef:\n        name: gvisor-default\n      name: gvisor\n  template:\n    labels:\n      substrate.viper-env/tier: coding\n    serviceAccountName: kagent-default\n  workerImage: us-docker.pkg.dev/solo-public/substrate-enterprise/ateworker-gvisor:v0.6.0-b15382d4"]], "p-def": [["workerpool/kagent-default", "apiVersion: ate.dev/v1alpha1\nkind: WorkerPool\nmetadata:\n  annotations:\n    meta.helm.sh/release-name: kagent\n    meta.helm.sh/release-namespace: kagent\n  labels:\n    app.kubernetes.io/instance: kagent\n    app.kubernetes.io/managed-by: Helm\n    app.kubernetes.io/name: kagent-enterprise\n    app.kubernetes.io/part-of: kagent\n    app.kubernetes.io/version: 1.0.0-alpha12\n    helm.sh/chart: kagent-enterprise-1.0.0-alpha12\n    kagent.dev/worker-pool-name: kagent-default\n    kagent.dev/worker-pool-namespace: kagent\n  name: kagent-default\n  namespace: kagent\nspec:\n  replicas: 3\n  sandboxClasses:\n    - configRef:\n        name: gvisor-default\n      name: gvisor\n  template:\n    serviceAccountName: kagent-default\n  workerImage: us-docker.pkg.dev/solo-public/substrate-enterprise/ateworker-gvisor:v0.6.0-b15382d4"]], "p-high": [["workerpool/kagent-high", "apiVersion: ate.dev/v1alpha1\nkind: WorkerPool\nmetadata:\n  labels:\n    app.kubernetes.io/part-of: viper-env\n    kagent.dev/worker-pool-name: kagent-high\n    kagent.dev/worker-pool-namespace: kagent\n    substrate.viper-env/tier: high\n  name: kagent-high\n  namespace: kagent\nspec:\n  replicas: 2\n  sandboxClasses:\n    - configRef:\n        name: gvisor-default\n      name: gvisor\n  template:\n    labels:\n      substrate.viper-env/tier: high\n    priorityClassName: substrate-high\n    serviceAccountName: kagent-default\n  workerImage: us-docker.pkg.dev/solo-public/substrate-enterprise/ateworker-gvisor:v0.6.0-b15382d4"]], "sbc": [["sandboxconfig/gvisor-default", "apiVersion: ate.dev/v1alpha1\nkind: SandboxConfig\nmetadata:\n  annotations:\n    meta.helm.sh/release-name: substrate\n    meta.helm.sh/release-namespace: ate-system\n    sandboxconfig.ate.dev/is-class-default: \"true\"\n  labels:\n    app.kubernetes.io/managed-by: Helm\n  name: gvisor-default\nspec:\n  defaultVersion: v4\n  sandboxClass: gvisor\n  versions:\n    - assets:\n        amd64:\n          gvisor:\n            sha256: fa72f0d45756c69a30beec21222c78241b0d330c36f4f2185648617cc23415c8\n            url: gs://gvisor/releases/nightly/2026-10-17/x86_64/gvisor.tar.zstd\n        arm64:\n          gvisor:\n            sha256: 238634978d99f0dd3e631c4f88eae7b19fb36937065428467f0b6d6b10697689\n            url: gs://gvisor/releases/nightly/2026-10-17/aarch64/gvisor.tar.zstd\n      name: v4\n      state: Enabled"]], "ui": [["kagent-ui", "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: kagent-ui\n  namespace: kagent\nspec:\n  replicas: 1\n  template:\n    spec:\n      serviceAccountName: kagent-ui\n      containers:\n        - name: ui\n          image: us-docker.pkg.dev/solo-public/solo-enterprise/solo-enterprise-ui-frontend:1.0.0-alpha12\n          ports:\n            - name: http\n              containerPort: 8080\n          resources:\n            limits:\n              cpu: \"1\"\n              memory: 1Gi\n            requests:\n              cpu: 100m\n              memory: 256Mi"]], "ctl": [["kagent-controller", "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: kagent-controller\n  namespace: kagent\nspec:\n  replicas: 1\n  template:\n    spec:\n      serviceAccountName: kagent-controller\n      containers:\n        - name: controller\n          image: us-docker.pkg.dev/solo-public/kagent-enterprise/kagent-enterprise-controller:1.0.0-alpha12\n          args:\n            - --config=/etc/kagent/controller.yaml\n          ports:\n            - name: http\n              containerPort: 8083\n            - name: enterprise\n              containerPort: 8085\n            - name: rpc-metrics\n              containerPort: 9090\n          env:\n            - KAGENT_NAMESPACE\n            - K8S_POD_NAME\n            - K8S_POD_UID\n            - K8S_NODE_NAME\n            - OTEL_RESOURCE_ATTRIBUTES\n            - ENTERPRISE_KAGENT_LICENSE_KEY\n            - CLICKHOUSE_ADDRESS\n            - CLICKHOUSE_DATABASE\n            - CLICKHOUSE_PASSWORD\n            - CLICKHOUSE_PORT\n            - CLICKHOUSE_USERNAME\n          resources:\n            limits:\n              cpu: \"2\"\n              memory: 512Mi\n            requests:\n              cpu: 100m\n              memory: 128Mi\n        - name: idp\n          image: us-docker.pkg.dev/solo-public/solo-enterprise/solo-enterprise-autoauth:v0.2.2\n          ports:\n            - name: autoauth\n              containerPort: 5556\n          env:\n            - PORT\n            - ISSUER\n            - PROFILE_SET\n          resources:\n            limits:\n              cpu: 250m\n              memory: 512Mi\n            requests:\n              cpu: 100m\n              memory: 256Mi"], ["kagent-controller ConfigMap \u00b7 controller.yaml", "database:\n  owner:\n    role: kagent_owner\n  pool:\n    maxConnIdleTime: 1800s\n    maxConnLifetime: 3600s\n    maxConns: 20\n    minConns: 2\n  readWrite:\n    role: kagent_readwrite\n  schema: kagent\n  skipMigrations: false\n  vectorEnabled: true\n  vectorSchema: extensions\ngateway:\n  publicUrl: http://kagent-controller.kagent.svc.cluster.local:8083\nharnessImages: {}\nkubernetes:\n  namespace: kagent\n  watchNamespaces: []\nlogging:\n  level: debug\nmetrics:\n  bindAddress: \"0\"\n  secure: true\npush:\n  allowHttp: false\n  allowPrivateNetworks: false\n  issuer: http://kagent-controller.kagent.svc.cluster.local:8083\n  recoveryInterval: 60s\nruntimeDefaults:\n  builtinTools:\n    bashVenvPath: \"\"\n    disableBash: false\n    disableFileSearch: false\n  controlPlaneUrl: http://kagent-controller.kagent.svc.cluster.local:8083\n  cpu: \"1\"\n  gatewayUrl: http://kagent-controller.kagent.svc.cluster.local:8083\n  logging:\n    level: info\n  memory: 1Gi\n  telemetry:\n    metrics:\n      endpoint: http://solo-enterprise-telemetry-collector.kagent.svc.cluster.local:4317\n    traces:\n      endpoint: http://solo-enterprise-telemetry-collector.kagent.svc.cluster.local:4317\nsandboxes:\n  cpu: \"1\"\n  defaultTtl: 3600s\n  guestImage: \"\"\n  maxTtl: 86400s\n  memory: 1Gi\nserver:\n  auth:\n    mode: insecure\n  bindAddress: :8083\n  grpcReflection: false\nsessions:\n  idleTtl: 604800s\n  shareMaxTtl: 0s\nsubstrate:\n  actorJwtIssuer: https://idp.ate-system.svc\n  apiEndpoint: dns:///api.ate-system.svc:443\n  caFile: /run/substrate-servicedns/trust-bundle.pem\n  clientCertFile: /run/substrate-podidentity/credential-bundle.pem\n  routerUrl: http://atenet-router.ate-system.svc:80\ntelemetry:\n  metrics:\n    endpoint: http://solo-enterprise-telemetry-collector.kagent.svc.cluster.local:4317\n  traces:\n    endpoint: http://solo-enterprise-telemetry-collector.kagent.svc.cluster.local:4317"]], "ate-api": [["ate-api-server", "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: ate-api-server\n  namespace: ate-system\nspec:\n  replicas: 2\n  template:\n    spec:\n      serviceAccountName: ate-api-server\n      containers:\n        - name: ate-api-server\n          image: us-docker.pkg.dev/solo-public/substrate-enterprise/ateapi:v0.6.0-b15382d4\n          args:\n            - --preview=PerTemplateSnapshotLocation\n            - --objectstore-plugin-socket=/run/objectstore-plugin/control.sock\n            - --snapshot-location=@env\n            - --grpc-listen-addr=0.0.0.0:443\n            - --grpc-server-cred-bundle=/run/servicedns.podcert.ate.dev/credential-bundle.pem\n            - --config-file=/run/apiconfig.ate.dev/apiconfig.textproto\n            - --authz-bootstrap-owners=spiffe://cluster.local/ns/kagent/sa/kagent-controller\n            - --authentication-config=/etc/ateapi/authentication/authentication.yaml\n            - --postgres-read-write-connection-string=@env\n            - --postgres-owner-connection-string=@env\n            - --postgres-read-write-role=substrate_readwrite\n            - --postgres-owner-role=substrate_owner\n            - --postgres-schema=@env\n            - --actor-jwt-issuer=@env\n            - --actor-id-jwt-pool=/run/actor-id-jwt-pool/pool.json\n            - --actor-id-ca-pool=/run/actor-id-ca-pool/pool.json\n            - --default-egress-gateway-address=atenet-egress.ate-system.svc:443\n            - --atelet-service-account=atelet\n            - --controller-spiffe-id=spiffe://cluster.local/ns/ate-system/sa/ate-controller\n            - --api-server-sidecar-spiffe-id=spiffe://cluster.local/ns/ate-system/sa/ate-api-server\n            - --egress-gateway-spiffe-id=spiffe://cluster.local/ns/ate-system/sa/atenet-egress\n            - --ingress-router-spiffe-id=spiffe://cluster.local/ns/ate-system/sa/atenet-router\n            - --atelet-client-cred-bundle=/run/podidentity.podcert.ate.dev/credential-bundle.pem\n            - --pod-identity-ca-certs=/run/podidentity.podcert.ate.dev/trust-bundle.pem\n            - --drain-delay=13s\n            - --drain-timeout=15s\n          ports:\n            - containerPort: 443\n            - name: prometheus\n              containerPort: 9090\n            - name: health\n              containerPort: 9091\n          env:\n            - POD_NAME\n            - POD_NAMESPACE\n            - POD_UID\n            - OTEL_RESOURCE_ATTRIBUTES\n            - ATE_API_POSTGRES_READ_WRITE_CONNECTION_STRING\n            - ATE_API_POSTGRES_OWNER_CONNECTION_STRING\n            - OTEL_EXPORTER_OTLP_ENDPOINT\n            - OTEL_TRACES_EXPORTER\n            - OTEL_LOGS_EXPORTER\n          resources:\n            limits:\n              cpu: \"2\"\n              memory: 1Gi\n            requests:\n              cpu: 100m\n              memory: 256Mi"]], "ate-ctl": [["ate-controller", "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: ate-controller\n  namespace: ate-system\nspec:\n  replicas: 1\n  template:\n    spec:\n      serviceAccountName: ate-controller\n      containers:\n        - name: ate-controller\n          image: us-docker.pkg.dev/solo-public/substrate-enterprise/atecontroller:v0.6.0-b15382d4\n          args:\n            - --preview=PerTemplateSnapshotLocation\n            - --ateapi-conn-spec=dns:///api.ate-system.svc:443\n            - --atelet-service-account=atelet\n            - --router-service-account=atenet-router\n            - --ateapi-ca-file=/run/servicedns-ca/trust-bundle.pem\n            - --ateapi-client-cert=/run/podidentity.podcert.ate.dev/credential-bundle.pem\n            - --ate-ca-agent-image=us-docker.pkg.dev/solo-public/substrate-enterprise/atecaagent:v0.6.0-b15382d4\n            - --ate-ca-agent-resources={\"limits\":{\"cpu\":\"100m\",\"memory\":\"128Mi\"},\"requests\":{\"cpu\":\"10m\",\"memory\":\"32Mi\"}}\n            - --worker-credential-mode=podcertificates\n            - --dns-egress-policy=enforce-in-atunnel\n          ports:\n            - name: metrics\n              containerPort: 8080\n            - name: healthz\n              containerPort: 8081\n          env:\n            - POD_NAMESPACE\n            - ATE_WORKER_OTEL_LOGS_EXPORTER\n            - ATE_WORKER_OTEL_TRACES_EXPORTER\n            - ATE_WORKER_OTEL_METRICS_EXPORTER\n            - OTEL_EXPORTER_OTLP_ENDPOINT\n            - OTEL_TRACES_EXPORTER\n            - OTEL_LOGS_EXPORTER\n          resources:\n            limits:\n              cpu: \"1\"\n              memory: 512Mi\n            requests:\n              cpu: 50m\n              memory: 128Mi"]], "atelet": [["atelet", "apiVersion: apps/v1\nkind: DaemonSet\nmetadata:\n  name: atelet\n  namespace: ate-system\nspec:\n  template:\n    spec:\n      serviceAccountName: atelet\n      containers:\n        - name: atelet\n          image: us-docker.pkg.dev/solo-public/substrate-enterprise/atelet:v0.6.0-b15382d4\n          args:\n            - --preview=PerTemplateSnapshotLocation\n            - --objectstore-plugin-socket=/run/objectstore-plugin/node.sock\n            - --grpc-server-cred-bundle=/run/podidentity.podcert.ate.dev/credential-bundle.pem\n            - --client-ca-certs=/run/podidentity.podcert.ate.dev/trust-bundle.pem\n            - --herder-allowed-spiffe-id=spiffe://cluster.local/ns/ate-system/sa/ate-api-server\n            - --ateapi-ca-file=/run/servicedns.podcert.ate.dev/trust-bundle.pem\n          ports:\n            - name: grpc\n              containerPort: 21998\n            - name: prometheus\n              containerPort: 9090\n            - name: health\n              containerPort: 9091\n          env:\n            - NODE_NAME\n            - POD_NAME\n            - POD_NAMESPACE\n            - POD_UID\n            - OTEL_RESOURCE_ATTRIBUTES\n            - OTEL_EXPORTER_OTLP_ENDPOINT\n            - OTEL_TRACES_EXPORTER\n            - OTEL_LOGS_EXPORTER\n          resources:\n            limits:\n              cpu: \"2\"\n              memory: 1Gi\n            requests:\n              cpu: 50m\n              memory: 256Mi"]], "idp": [["ate-idp-server", "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: ate-idp-server\n  namespace: ate-system\nspec:\n  replicas: 2\n  template:\n    spec:\n      serviceAccountName: ate-idp-server\n      containers:\n        - name: ate-idp-server\n          image: us-docker.pkg.dev/solo-public/substrate-enterprise/ate-idp-server:v0.6.0-b15382d4\n          args:\n            - --issuer=https://idp.ate-system.svc\n            - --actor-id-jwt-pool=/run/actor-id-jwt-pool/pool.json\n            - --server-cred-bundle=/run/servicedns.podcert.ate.dev/credential-bundle.pem\n          ports:\n            - name: https\n              containerPort: 8443\n          resources: {}"]], "cred": [["k8s-credential-provider", "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: k8s-credential-provider\n  namespace: ate-system\nspec:\n  replicas: 1\n  template:\n    spec:\n      serviceAccountName: k8s-credential-provider\n      containers:\n        - name: k8s-credential-provider\n          image: us-docker.pkg.dev/solo-public/substrate-enterprise/kubernetes-secrets:v0.6.0-b15382d4\n          args:\n            - --listen-address=:50051\n            - --metrics-address=:9090\n            - --health-address=:9091\n            - --status-address=:4040\n            - --server-cred-bundle=/run/servicedns.podcert.ate.dev/credential-bundle.pem\n            - --client-ca-file=/run/podidentity.podcert.ate.dev/trust-bundle.pem\n            - --namespace-policy-file=/etc/k8s-credential-provider/namespace-policy.yaml\n            - --injector-identity=spiffe://cluster.local/ns/ate-system/sa/atenet-egress\n            - --log-level=info\n          ports:\n            - name: grpc\n              containerPort: 50051\n            - name: metrics\n              containerPort: 9090\n            - name: health\n              containerPort: 9091\n            - name: statusz\n              containerPort: 4040\n          resources:\n            limits:\n              cpu: 500m\n              memory: 256Mi\n            requests:\n              cpu: 10m\n              memory: 64Mi"]], "router": [["atenet-router", "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: atenet-router\n  namespace: ate-system\nspec:\n  replicas: 1\n  template:\n    spec:\n      serviceAccountName: atenet-router\n      containers:\n        - name: agentgateway\n          image: ghcr.io/kagent-dev/substrate/agentgateway:cd65181fd52e@sha256:ebebf5a7fa2a54fb524ccce1f6f74ee6e7ef22d661f22e212717fd0a68dadb33\n          args:\n            - -f\n            - /etc/agentgateway/config.yaml\n          ports:\n            - name: http\n              containerPort: 8080\n            - name: https\n              containerPort: 8443\n            - name: connect\n              containerPort: 8081\n            - name: connect-tls\n              containerPort: 8444\n            - name: readiness\n              containerPort: 15021\n            - name: gw-metrics\n              containerPort: 15020\n          env:\n            - ENTERPRISE_AGENTGATEWAY_LICENSE_KEY\n            - AGENTGATEWAY_OTLP_LOGS_ADDRESS\n          resources:\n            limits:\n              cpu: \"2\"\n              memory: 1Gi\n            requests:\n              cpu: 100m\n              memory: 128Mi"]], "egress": [["atenet-egress", "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: atenet-egress\n  namespace: ate-system\nspec:\n  replicas: 1\n  template:\n    spec:\n      serviceAccountName: atenet-egress\n      containers:\n        - name: agentgateway\n          image: ghcr.io/kagent-dev/substrate/agentgateway:cd65181fd52e@sha256:ebebf5a7fa2a54fb524ccce1f6f74ee6e7ef22d661f22e212717fd0a68dadb33\n          args:\n            - -f\n            - /etc/agentgateway/config.yaml\n          ports:\n            - name: https\n              containerPort: 8443\n            - name: readiness\n              containerPort: 15021\n            - name: stats\n              containerPort: 15020\n          env:\n            - POD_IP\n            - RUST_LOG\n            - ENTERPRISE_AGENTGATEWAY_LICENSE_KEY\n          resources:\n            limits:\n              cpu: \"2\"\n              memory: 1Gi\n            requests:\n              cpu: 50m\n              memory: 128Mi"]], "s3": [["rustfs", "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: rustfs\n  namespace: ate-system\nspec:\n  replicas: 1\n  template:\n    spec:\n      serviceAccountName: rustfs\n      containers:\n        - name: rustfs\n          image: rustfs/rustfs:1.0.0-beta.3@sha256:378642b05b7dcb4849fb77ebe6aca4ced1c3f66e7e504247df95a5c9018d3358\n          ports:\n            - name: api\n              containerPort: 9000\n            - name: console\n              containerPort: 9001\n          env:\n            - RUSTFS_ADDRESS\n            - RUSTFS_CONSOLE_ADDRESS\n            - RUSTFS_CONSOLE_ENABLE\n            - RUSTFS_VOLUMES\n            - RUSTFS_ACCESS_KEY\n            - RUSTFS_SECRET_KEY\n          resources:\n            limits:\n              cpu: \"1\"\n              memory: 1Gi\n            requests:\n              cpu: 50m\n              memory: 256Mi"]], "u-spark": [["dgx-spark-svc", "apiVersion: v1\nkind: Service\nmetadata:\n  name: dgx-spark\n  namespace: kagent\nspec:\n  internalTrafficPolicy: Cluster\n  ipFamilies:\n    - IPv4\n  ipFamilyPolicy: SingleStack\n  ports:\n    - name: http\n      port: 8000\n      protocol: TCP\n      targetPort: 8000\n  sessionAffinity: None\n  type: ClusterIP"]], "u-agw": [["agw-openai-backend", "apiVersion: agentgateway.dev/v1alpha1\nkind: AgentgatewayBackend\nmetadata:\n  name: openai\n  namespace: agentgateway-system\nspec:\n  ai:\n    provider:\n      openai: {}\n  policies:\n    ai:\n      routes:\n        '*': Completions\n        /v1/models: Models\n        /v1/responses: Responses\n    auth:\n      secretRef:\n        name: openai-secret"]], "u-bed": [["agw-bedrock-backend", "apiVersion: agentgateway.dev/v1alpha1\nkind: AgentgatewayBackend\nmetadata:\n  name: bedrock-claude-haiku-4-5\n  namespace: agentgateway-system\nspec:\n  ai:\n    provider:\n      bedrock:\n        endpointPreference: RuntimeOnly\n        model: us.anthropic.claude-haiku-4-5-20251001-v1:0\n        region: us-east-2\n  policies:\n    auth:\n      secretRef:\n        name: bedrock-secret"]], "u-tools": [["kagent-tools", "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: kagent-tools\n  namespace: kagent\nspec:\n  replicas: 1\n  template:\n    spec:\n      serviceAccountName: kagent-tools\n      containers:\n        - name: tools\n          image: ghcr.io/kagent-dev/kagent/tools:0.3.0\n          args:\n            - --port\n            - \"8084\"\n            - --metrics-port\n            - \"8085\"\n          ports:\n            - name: http-tools\n              containerPort: 8084\n            - name: http-metrics\n              containerPort: 8085\n          env:\n            - KAGENT_NAMESPACE\n            - OPENAI_API_KEY\n            - OTEL_TRACING_ENABLED\n            - OTEL_EXPORTER_OTLP_ENDPOINT\n            - OTEL_EXPORTER_OTLP_TRACES_TIMEOUT\n            - OTEL_EXPORTER_OTLP_TRACES_INSECURE\n            - TOKEN_PASSTHROUGH\n            - PROMETHEUS_URL\n            - PROMETHEUS_USERNAME\n            - PROMETHEUS_PASSWORD\n            - GRAFANA_URL\n            - GRAFANA_API_KEY\n          resources:\n            limits:\n              cpu: \"1\"\n              memory: 512Mi\n            requests:\n              cpu: 100m\n              memory: 128Mi"]], "u-fmcp": [["fortigate-mcp", "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: fortigate-mcp\n  namespace: kagent\nspec:\n  replicas: 1\n  template:\n    spec:\n      containers:\n        - name: fortigate-mcp\n          image: 127.0.0.1:5000/fortigate-mcp:dev\n          ports:\n            - name: mcp\n              containerPort: 8084\n          env:\n            - FORTIGATE_TOKEN\n            - FORTIGATE_HOST\n            - FORTIGATE_VERIFY_TLS\n            - MCP_HOST\n            - MCP_PORT\n          resources:\n            limits:\n              cpu: 200m\n              memory: 256Mi\n            requests:\n              cpu: 25m\n              memory: 64Mi"]], "sched": [["schedules", "# kagent schedules are stored by kagent-controller (Postgres), not as CRDs.\n# This is how they are configured in the UI (Schedules page). Each firing starts a new conversation.\n- name: agentgateway-daily-updates\n  agent: kagent/oss-update-watcher\n  repeat: daily 08:00 America/Toronto\n  timeout: 1800s\n  publishes: reports/agentgateway-updates/\n- name: kagent-daily-updates\n  agent: kagent/oss-update-watcher\n  repeat: daily 08:20 America/Toronto\n  timeout: 1800s\n  publishes: reports/kagent-updates/\n- name: fortigate-daily-resource-usage\n  agent: kagent/fortigate\n  repeat: daily 09:00 America/Toronto\n  timeout: 900s\n  publishes: reports/fortigate-health/\n- name: k8s-daily-cve-check\n  agent: kagent/k8s-cve-checker\n  repeat: daily 09:15 America/Toronto\n  timeout: 2400s\n  publishes: reports/k8s-cve/\n- name: fortigate-daily-fortiguard-cve\n  agent: kagent/fortigate-cve-watch\n  repeat: daily 09:30 America/Toronto\n  timeout: 2400s\n  publishes: reports/fortiguard-cve/\n- name: agent-summary-daily-audit\n  agent: kagent/agent-summary-auditor\n  repeat: daily 10:30 America/Toronto\n  timeout: 1200s\n  publishes: reports/_status/"]]}</script>
+<script>
+const W=176,H=46;
+const C={A:24,B:234,C:444,D:654,E:880,F:1090};
+const L={build:'var(--build)',run:'var(--run)',model:'var(--model)',sys:'var(--muted)',edge:'var(--edge)'};
+
+/* ---------- Kinds: what each component is + its special options (from kubectl explain on alpha12) ---------- */
+const KINDS={
+ Agent:{layer:'build',api:'api.kagent.dev/v1alpha3 · Agent',blurb:'Pairs exactly one AgentTemplate (behaviour) with one Harness (runtime). Applying it makes Substrate boot the runtime once and take a golden snapshot. Every chat forks from that snapshot.',
+  opts:[['spec.harnessRef','Which runtime tier it runs on. Change it to move tiers; that creates a new revision.'],['spec.template.ref','Use a shared, named AgentTemplate.'],['spec.template.inline','Or embed the template fields directly (one-off agents).'],['spec.egressPolicyRefs[]','Grant extra HTTP(S) egress from the sandbox, with credential injection.']],
+  snip:`apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata: {name: k8s-assistant, namespace: kagent}
+spec:
+  harnessRef: {name: default}
+  template:
+    ref: {name: k8s-assistant}
+  # egressPolicyRefs: [{name: allow-github}]`},
+ AgentTemplate:{layer:'build',api:'api.kagent.dev/v1alpha3 · AgentTemplate',blurb:'Portable behaviour: prompt, model and tools. It says nothing about where it runs, so one template can back agents on several tiers.',
+  opts:[['modelConfig.name','The LLM to use (a ModelConfig).'],['systemPrompt / systemPromptFrom','Inline prompt, or pull it from a ConfigMap key.'],['promptTemplate.dataSources[]','Inject named data sources into the prompt.'],['tools[].mcp','MCP server plus an allow-list of tool names. requireApproval adds a human-in-the-loop step.'],['tools[].subAgent','Delegate to another template (templateRef) as a tool.'],['skills[]','Agent Skills from git (pinned commit), OCI, S3 or a path.'],['plugins[]','Plugin bundles from the same sources, with selected skills.'],['outputSchema / outputSchemaFrom / outputSchemaStrict','Force structured JSON output.']],
+  snip:`kind: AgentTemplate
+spec:
+  modelConfig: {name: default-model-config}
+  systemPrompt: |
+    You are a read-only Kubernetes assistant...
+  tools:
+  - mcp:
+      server: {kind: RemoteMCPServer, name: kagent-tool-server}
+      tools: [k8s_get_resources, k8s_get_events]
+      requireApproval: false
+  - subAgent:
+      name: fortigate
+      description: Ask the firewall agent
+      templateRef: {name: fortigate}`},
+ ModelConfig:{layer:'model',api:'api.kagent.dev/v1alpha3 · ModelConfig',blurb:'Which LLM, at which URL, with which key. On omni-viper every model is reached through the OpenAI wire format; the backend behind the URL differs.',
+  opts:[['provider','Anthropic · OpenAI · AzureOpenAI · Ollama · Gemini · GeminiVertexAI · AnthropicVertexAI · Bedrock · Mistral · Foundry · SAPAICore'],['openAI.apiFormat','chatCompletions, or responses (needed by the Codex harness).'],['openAI.baseUrl','Must be a DNS name: a bare IP is rejected for credential injection.'],['openAI.reasoningEffort','none … high for reasoning models.'],['anthropic.promptCaching + cacheTTL','5m or 1h prompt caching.'],['bedrock.guardrail','Bedrock Guardrail identifier, version and trace.'],['apiKeySecret / apiKeySecretKey','Secret holding the key (a placeholder when a gateway injects it).'],['tokenPassthrough · defaultHeaders · tls.disableVerify · stream','Forward the user token, add headers, lab TLS, streaming.']],
+  snip:`kind: ModelConfig
+spec:
+  provider: OpenAI
+  model: qwen3.8-flash-next
+  stream: true
+  apiKeySecret: kagent-spark-openai
+  apiKeySecretKey: OPENAI_API_KEY
+  openAI:
+    apiFormat: chatCompletions
+    baseUrl: http://dgx-spark.kagent.svc.cluster.local:8000/v1`},
+ ModelProviderConfig:{layer:'model',api:'api.kagent.dev/v1alpha3 · ModelProviderConfig',blurb:'Shared provider connection (type, endpoint, credentials Secret) so many ModelConfigs do not repeat it. Not used on omni-viper yet.',
+  opts:[['type','Provider enum, same as ModelConfig.provider.'],['endpoint','Base URL for the provider.'],['secretRef.name','Credentials Secret.']],
+  snip:`kind: ModelProviderConfig
+spec:
+  type: OpenAI
+  endpoint: http://agentgateway-proxy.agentgateway-system.svc:8080/openai/v1
+  secretRef: {name: kagent-spark-openai}`},
+ RemoteMCPServer:{layer:'model',api:'api.kagent.dev/v1alpha3 · RemoteMCPServer',blurb:'An MCP endpoint that templates can draw tools from. The template picks which tools from it the model may see.',
+  opts:[['url','Streamable HTTP or SSE MCP endpoint.'],['protocol','STREAMABLE_HTTP (all three here).'],['(in templates) tools[]','Allow-list per agent; requireApproval per server.']],
+  snip:`kind: RemoteMCPServer
+metadata: {name: fortigate-mcp, namespace: kagent}
+spec:
+  protocol: STREAMABLE_HTTP
+  url: http://fortigate-mcp.kagent:8084/mcp`},
+ EgressPolicy:{layer:'build',api:'api.kagent.dev/v1alpha3 · EgressPolicy',blurb:'Grants extra HTTP(S) destinations to sandboxes in its namespace; everything else stays blocked at atenet-egress. It can also inject a credential header, so the agent never holds the secret. Three are live on omni-viper: allow-osv, allow-fortiguard, allow-github-mcp.',
+  opts:[['destinations[].origin','Scheme + DNS host + optional port: https://api.osv.dev, http://svc.ns.svc.cluster.local:8080'],['Wildcard origin','https://*.githubusercontent.com: exactly one leftmost label; *.*.x is rejected'],['Several destinations','One policy can list many origins; an Agent can reference many policies'],['authentication.header + prefix','Header atenet-egress injects, e.g. Authorization: "Bearer "'],['authentication.secretKeyRef','{name, key, optional}: the Secret egress reads; the sandbox never sees the value'],['Agent.spec.egressPolicyRefs','Attach policies to an agent; status EgressPoliciesApplied=True when admitted'],['SandboxTemplate.spec.egressPolicyRefs','Same grants for standalone sandboxes'],['Enforced by','atenet-egress (Substrate agentgateway build), per actor, via ate-api-server']],
+  snip:`kind: EgressPolicy
+metadata: {name: allow-github, namespace: kagent}
+spec:
+  destinations:
+  - origin: https://api.github.com
+    authentication:
+      header: Authorization
+      prefix: "Bearer "
+      secretKeyRef: {name: github-token, key: token}`},
+ Harness:{layer:'run',api:'api.kagent.dev/v1alpha3 · Harness',blurb:'The runtime tier: which agent runtime image runs, on which WorkerPool, and where session snapshots go. Substrate has no priority queue, so a tier is a Harness plus its own pool.',
+  opts:[['kagent | codex | claude | byo','Runtime flavour (kagent = golang ADK).'],['kagent.compaction','tokenThreshold, compactionInterval, overlapSize, eventRetentionSize, summarizer.modelConfigRef.'],['kagent.memory','Long-term memory: modelConfigRef + ttlDays.'],['workload.image / command / args','Runtime image. Must match the controller runtime contract (alpha12 ↔ OSS alpha17). Pin by digest.'],['env[]','Extra environment for the runtime.'],['substrate.workerPoolRef','Exactly one WorkerPool.'],['substrate.snapshotPolicy.location','S3 location for golden snapshots and session checkpoints.']],
+  snip:`kind: Harness
+spec:
+  kagent:
+    compaction: {tokenThreshold: 60000}
+    memory: {modelConfigRef: {name: default-model-config}, ttlDays: 30}
+  substrate:
+    workerPoolRef: {name: kagent-default}
+    snapshotPolicy: {location: s3://ate-snapshots/kagent/default}
+  workload:
+    image: ghcr.io/kagent-dev/kagent/golang-adk:1.0.0-alpha17@sha256:…`},
+ SandboxTemplate:{layer:'run',api:'api.kagent.dev/v1alpha3 · SandboxTemplate',blurb:'A standalone sandbox with no agent: your image on a WorkerPool with snapshots and egress policy. Useful for code execution environments. Not used on omni-viper yet.',
+  opts:[['workload.image','Image to run in the sandbox.'],['env[]','Environment.'],['substrate.workerPoolRef + snapshotPolicy','Same placement model as a Harness.'],['egressPolicyRefs[]','Outbound access.']],
+  snip:`kind: SandboxTemplate
+spec:
+  workload: {image: python:3.13-slim}
+  substrate:
+    workerPoolRef: {name: kagent-coding}
+    snapshotPolicy: {location: s3://ate-snapshots/kagent/sandboxes}`},
+ WorkerPool:{layer:'run',api:'ate.dev/v1alpha1 · WorkerPool',blurb:'N pre-warmed sandbox workers. Sessions are restored onto a free worker from the golden snapshot. Keep at least 2 so a new revision can prepare while the old one serves.',
+  opts:[['replicas','Worker count = concurrent sessions for this tier.'],['sandboxClasses[]','gvisor or microvm, plus configRef to a SandboxConfig. Names are immutable.'],['workerImage','Must match the Substrate control-plane version.'],['template.priorityClassName','Eviction order under pressure (see substrate-high).'],['template.nodeSelector / nodeAffinity / tolerations','Pin tiers to node groups (GPU, dedicated nodes).'],['template.resources · serviceAccountName · labels','Pod shape and identity.']],
+  snip:`apiVersion: ate.dev/v1alpha1
+kind: WorkerPool
+spec:
+  replicas: 2
+  sandboxClasses:
+  - {name: gvisor, configRef: {name: gvisor-default}}
+  workerImage: us-docker.pkg.dev/solo-public/substrate-enterprise/ateworker-gvisor:v0.6.0-b15382d4
+  template:
+    serviceAccountName: kagent-default
+    priorityClassName: substrate-high`},
+ SandboxConfig:{layer:'run',api:'ate.dev · SandboxConfig',blurb:'Isolation settings referenced by WorkerPool sandbox classes. gvisor-default is used by all three pools here.',opts:[['(referenced by) sandboxClasses[].configRef','One config per class.']],snip:`sandboxClasses:
+- name: gvisor
+  configRef: {name: gvisor-default}`},
+ Schedule:{layer:'build',api:'kagent UI · Schedules (stored in Postgres, not a CRD)',blurb:'Runs an agent automatically. Each firing starts a new conversation with the schedule prompt, visible in the execution history with a Run button for on-demand runs. All six here end by publishing to sebbycorp/agent-summary; the 10:30 auditor checks they did.',
+  opts:[['Agent','Any Agent in the namespace; one agent can serve several schedules (oss-update-watcher has two).'],['Repeat + At time + Time zone','e.g. Daily 09:15 America/Toronto, DST-aware.'],['Prompt','The task. Ends with the standard publish block for agent-summary.'],['Execution timeout','Includes queueing and agent startup. CVE runs need 2400s on the local model.'],['Enable','Pause without deleting; edits apply from the next firing.']],
+  snip:`When the report is done, publish it with the GitHub tools to repository
+sebbycorp/agent-summary on branch main: use push_files to write the same
+Markdown report to BOTH reports/<report>/latest.md and
+reports/<report>/YYYY/YYYY-MM-DD.md (America/Toronto) in ONE commit with
+message "<report>: YYYY-MM-DD". Finish by giving the commit link.`},
+ System:{layer:'sys',api:'Platform component',blurb:'',opts:[],snip:''},
+ Upstream:{layer:'model',api:'Upstream endpoint',blurb:'',opts:[],snip:''},
+};
+
+/* ---------- Nodes (live omni-viper state, 2026-11-04) ---------- */
+const R=i=>96+54*i;            // Build band rows
+const Q=i=>657+60*i;           // Run band rows
+const N=[
+ // Access & control
+ {id:'ui',k:'System',x:C.A,y:R(0),n:'kagent UI',s:':30501 · /a2a proxy',f:{URL:'https://viper.maniak.lab:30501',Proxy:'/a2a, /api → controller:8085',Image:'solo-enterprise-ui-frontend:1.0.0-alpha12'},b:'Enterprise UI. Chat is server-sent events over /a2a, proxied by nginx to the controller enterprise port (auto-auth). Schedules and Snapshots pages live here too.'},
+ {id:'ctl',k:'System',x:C.A,y:R(1.6),n:'kagent-controller',s:'1.0.0-alpha12',f:{Ports:'8083 api/mcp · 8085 enterprise','Substrate API':'dns:///api.ate-system.svc:443 (mTLS client cert)',Router:'http://atenet-router.ate-system.svc','Session idle TTL':'7d'},b:'Reconciles Agents, Templates, Harnesses and ModelConfigs; turns each Agent into a Substrate actor template; owns sessions, snapshots and schedules; streams turns through atenet-router.'},
+ {id:'sched',k:'Schedule',x:C.A,y:R(3.2),n:'Schedules',s:'6 daily · America/Toronto',f:{'08:00':'agentgateway-daily-updates','08:20':'kagent-daily-updates','09:00':'fortigate-daily-resource-usage','09:15':'k8s-daily-cve-check','09:30':'fortigate-daily-fortiguard-cve','10:30':'agent-summary-daily-audit'}},
+ {id:'pg',k:'System',x:C.A,y:R(4.8),n:'Postgres',s:'pgvector · kagent + substrate',f:{Pod:'postgres/postgres-0',DBs:'kagent (kagent, enterprise, extensions) · substrate'},b:'State for kagent (sessions, snapshots, schedules, vectors) and Substrate (actors, workers). Lab grade, no backups.'},
+ {id:'otel',k:'System',x:C.A,y:R(6.4),n:'Telemetry',s:'OTel collector → ClickHouse',f:{Endpoint:'solo-enterprise-telemetry-collector.kagent:4317'},b:'Traces and metrics from the controller and every runtime. Feeds the Tracing and Analytics pages.'},
+ // Agents
+ {id:'a-codex',k:'Agent',x:C.B,y:R(0),n:'codex-coder',s:'harness: coding',f:{Harness:'coding',Template:'codex-coder',Ready:'True'}},
+ {id:'a-forti',k:'Agent',x:C.B,y:R(1),n:'fortigate',s:'harness: default · 09:00',f:{Harness:'default',Template:'fortigate',Egress:'allow-github-mcp',Schedule:'fortigate-daily-resource-usage 09:00'}},
+ {id:'a-k8s',k:'Agent',x:C.B,y:R(2),n:'k8s-assistant',s:'harness: default',f:{Harness:'default',Template:'k8s-assistant',Ready:'True'}},
+ {id:'a-k8sp',k:'Agent',x:C.B,y:R(3),n:'k8s-assistant-priority',s:'harness: high',f:{Harness:'high',Template:'k8s-assistant-priority',Ready:'True'}},
+ {id:'a-cve',k:'Agent',x:C.B,y:R(4),n:'k8s-cve-checker',s:'harness: default · 09:15',f:{Harness:'default',Template:'k8s-cve-checker',Egress:'allow-osv, allow-github-mcp',Schedule:'k8s-daily-cve-check 09:15'}},
+ {id:'a-fgcve',k:'Agent',x:C.B,y:R(5),n:'fortigate-cve-watch',s:'harness: default · 09:30',f:{Harness:'default',Template:'fortigate-cve-watch',Egress:'allow-fortiguard, allow-github-mcp',Schedule:'fortigate-daily-fortiguard-cve 09:30'}},
+ {id:'a-oss',k:'Agent',x:C.B,y:R(6),n:'oss-update-watcher',s:'harness: default · 08:00/08:20',f:{Harness:'default',Template:'oss-update-watcher',Egress:'allow-github-mcp',Schedules:'agentgateway-daily-updates 08:00 · kagent-daily-updates 08:20'}},
+ {id:'a-audit',k:'Agent',x:C.B,y:R(7),n:'agent-summary-auditor',s:'harness: high · 10:30',f:{Harness:'high (reserved pool)',Template:'agent-summary-auditor',Egress:'allow-github-mcp',Schedule:'agent-summary-daily-audit 10:30'}},
+ // Templates
+ {id:'t-codex',k:'AgentTemplate',x:C.C,y:R(0),n:'codex-coder',s:'gpt-5.4 · Codex shell tools',f:{Model:'codex-gpt-5-4',Tools:'none declared (Codex brings shell + files)'}},
+ {id:'t-forti',k:'AgentTemplate',x:C.C,y:R(1),n:'fortigate',s:'qwen · 22 FG + 3 GitHub tools',f:{Model:'default-model-config',Tools:'fortigate-mcp × 22 · github-mcp × 3 (publish)'}},
+ {id:'t-k8s',k:'AgentTemplate',x:C.C,y:R(2),n:'k8s-assistant',s:'qwen · 7 MCP tools',f:{Model:'default-model-config',Tools:'kagent-tool-server × 7 (read-only)'}},
+ {id:'t-k8sp',k:'AgentTemplate',x:C.C,y:R(3),n:'k8s-assistant-priority',s:'qwen · 7 MCP tools',f:{Model:'default-model-config',Tools:'kagent-tool-server × 7 (read-only)'}},
+ {id:'t-cve',k:'AgentTemplate',x:C.C,y:R(4),n:'k8s-cve-checker',s:'qwen · k8s + bash/OSV + GitHub',f:{Model:'default-model-config',Tools:'kagent-tool-server × 4 · github-mcp × 3 · built-in bash (wget → api.osv.dev)'}},
+ {id:'t-fgcve',k:'AgentTemplate',x:C.C,y:R(5),n:'fortigate-cve-watch',s:'qwen · FG + bash/RSS + GitHub',f:{Model:'default-model-config',Tools:'fortigate-mcp × 2 · github-mcp × 3 · built-in bash (wget → FortiGuard RSS)'}},
+ {id:'t-oss',k:'AgentTemplate',x:C.C,y:R(6),n:'oss-update-watcher',s:'qwen · 9 GitHub tools',f:{Model:'default-model-config',Tools:'github-mcp × 9: search/list/read + push_files'}},
+ {id:'t-audit',k:'AgentTemplate',x:C.C,y:R(7),n:'agent-summary-auditor',s:'qwen · 3 GitHub tools',f:{Model:'default-model-config',Tools:'github-mcp × 3: get_file_contents, list_commits, push_files'}},
+ // Models & tools
+ {id:'m-def',k:'ModelConfig',x:C.D,y:R(0),n:'default-model-config',s:'qwen3.8-flash-next',f:{Provider:'OpenAI (vLLM-compatible)',Model:'qwen3.8-flash-next',BaseURL:'http://dgx-spark.kagent.svc.cluster.local:8000/v1',Format:'chatCompletions · stream'}},
+ {id:'m-codex',k:'ModelConfig',x:C.D,y:R(1),n:'codex-gpt-5-4',s:'gpt-5.4 · responses',f:{Provider:'OpenAI',Model:'gpt-5.4',BaseURL:'http://agentgateway-proxy.agentgateway-system.svc:8080/openai/v1',Format:'responses (Codex)'}},
+ {id:'mpc',k:'ModelProviderConfig',x:C.D,y:R(2),n:'ModelProviderConfig',s:'available · 0 in use',ghost:1},
+ {id:'mcp-k',k:'RemoteMCPServer',x:C.D,y:R(3.3),n:'kagent-tool-server',s:'STREAMABLE_HTTP · accepted',f:{URL:'http://kagent-tools.kagent.svc.cluster.local:8084/mcp',Accepted:'True'}},
+ {id:'mcp-f',k:'RemoteMCPServer',x:C.D,y:R(4.3),n:'fortigate-mcp',s:'STREAMABLE_HTTP · accepted',f:{URL:'http://fortigate-mcp.kagent.svc.cluster.local:8084/mcp',Accepted:'True',Note:'Full DNS name: sandbox DNS has no search domains'}},
+ {id:'mcp-gh',k:'RemoteMCPServer',x:C.D,y:R(5.3),n:'github-mcp',s:'29 tools · repos,pull_requests',f:{URL:'https://api.githubcopilot.com/mcp/',Toolsets:'X-MCP-Toolsets: repos,pull_requests',Auth:'headersFrom Secret github-agent-summary ← ExternalSecret ← Vault secret/lab/github',Accepted:'True · 29 tools discovered'}},
+ {id:'mcp-a',k:'RemoteMCPServer',x:C.D,y:R(6.3),n:'kagent-api',s:'controller MCP · not accepted',f:{URL:'http://kagent-controller.kagent.svc.cluster.local:8083/mcp',Accepted:'False'}},
+ // Upstreams
+ {id:'u-spark',k:'Upstream',x:C.E,y:R(0),n:'DGX Spark · vLLM',s:'172.16.10.173:8000',f:{Service:'kagent/dgx-spark (selectorless + EndpointSlice)',Model:'Mia-AiLab/Qwen3.8-Flash-Next-NVFP4',Context:'262k tokens'},b:'Self-hosted model used by every agent except codex-coder. Called directly, no gateway in the path.'},
+ {id:'u-agw',k:'Upstream',x:C.E,y:R(1),n:'agentgateway-proxy',s:':30800 · /openai, /spark',f:{Route:'/openai → AgentgatewayBackend openai',Key:'openai-secret (injected by gateway)',Routes:'/v1/responses → Responses, * → Completions'},b:'Solo Enterprise agentgateway. Holds the provider key, meters tokens and cost, and traces every call.'},
+ {id:'u-bed',k:'Upstream',x:C.E,y:R(2),n:'bedrock-proxy',s:':30801 · /claude-haiku-4-5',f:{Route:'/claude-haiku-4-5 (model pinned)',Key:'bedrock-secret (ExternalSecret)'},b:'Second gateway for Bedrock. Translates Chat Completions to Bedrock.'},
+ {id:'u-tools',k:'Upstream',x:C.E,y:R(3.3),n:'kagent-tools',s:'tools:0.3.0',f:{Image:'ghcr.io/kagent-dev/kagent/tools:0.3.0'},b:'Built-in MCP tool server (Kubernetes, Helm, Istio, …).'},
+ {id:'u-fmcp',k:'Upstream',x:C.E,y:R(4.3),n:'fortigate-mcp pod',s:'22 tools · REST API',f:{Target:'https://172.16.10.1 (Secret kagent/fortigate-mcp)'},b:'Custom MCP server that wraps the FortiGate REST API.'},
+ {id:'u-ghmcp',k:'Upstream',x:C.E,y:R(5.3),n:'GitHub MCP (hosted)',s:'api.githubcopilot.com',b:'GitHub-hosted MCP server. Agents read upstream orgs and write reports through it; each template allow-lists only the tools it needs.'},
+ {id:'u-osv',k:'Upstream',x:C.E,y:R(6.3),n:'OSV.dev',s:'POST /v1/query',f:{Origin:'https://api.osv.dev',From:'sandbox bash (BusyBox wget)'},b:'Open-source vulnerability database. Only k8s-cve-checker may reach it (EgressPolicy allow-osv).'},
+ {id:'u-fguard',k:'Upstream',x:C.E,y:R(7.3),n:'FortiGuard feeds',s:'PSIRT + Outbreak Alert RSS',f:{Feeds:'filestore.fortinet.com/fortiguard/rss/ir.xml · outbreakalert.xml',Why:'fortiguard.fortinet.com/outbreak-alert is rendered by JavaScript; the RSS is its twin'},b:'Only fortigate-cve-watch may reach it (EgressPolicy allow-fortiguard).'},
+ {id:'u-oai',k:'Upstream',x:C.F,y:R(1),n:'OpenAI API',s:'gpt-5.4 · gpt-4o-mini …',f:{Via:'agentgateway-proxy'},b:'SaaS. Reached only through the gateway.'},
+ {id:'u-aws',k:'Upstream',x:C.F,y:R(2),n:'AWS Bedrock',s:'Claude Haiku 4.5 · us-east-2',f:{Model:'us.anthropic.claude-haiku-4-5-20251001-v1:0'},b:'SaaS. Reached only through bedrock-proxy.'},
+ {id:'u-fg',k:'Upstream',x:C.F,y:R(4.3),n:'FortiGate firewall',s:'fw-maniak-hq · FortiOS 7.4.11',b:'FortiGate 80F at 172.16.10.1, the device the fortigate agents inspect.'},
+ {id:'u-repo',k:'Upstream',x:C.F,y:R(5.3),n:'sebbycorp/agent-summary',s:'reports/<name>/latest.md',f:{Layout:'reports/<report>/latest.md + reports/<report>/YYYY/YYYY-MM-DD.md',Status:'reports/_status/latest.md (auditor, 10:30)',Reports:'agentgateway-updates · kagent-updates · fortigate-health · k8s-cve · fortiguard-cve'},b:'Where every scheduled agent publishes. One commit per report per day.'},
+ {id:'u-orgs',k:'Upstream',x:C.F,y:R(6.3),n:'github.com orgs',s:'agentgateway · kagent-dev',f:{Read:'github.com/agentgateway (agentgateway.dev) · github.com/kagent-dev (kagent.dev, substrate)'},b:'Upstream projects summarized daily by oss-update-watcher (read-only).'},
+ // Run band
+ {id:'egp-osv',k:'EgressPolicy',x:C.B,y:Q(0),n:'allow-osv',s:'https://api.osv.dev',f:{Origins:'https://api.osv.dev',Used:'k8s-cve-checker'}},
+ {id:'egp-fg',k:'EgressPolicy',x:C.B,y:Q(1),n:'allow-fortiguard',s:'filestore + fortiguard.fortinet.com',f:{Origins:'https://filestore.fortinet.com · https://fortiguard.fortinet.com',Used:'fortigate-cve-watch'}},
+ {id:'egp-gh',k:'EgressPolicy',x:C.B,y:Q(2),n:'allow-github-mcp',s:'https://api.githubcopilot.com',f:{Origins:'https://api.githubcopilot.com',Used:'fortigate · k8s-cve-checker · fortigate-cve-watch · oss-update-watcher · agent-summary-auditor'}},
+ {id:'h-coding',k:'Harness',x:C.C,y:Q(0),n:'coding',s:'codex runtime · alpha17',f:{Runtime:'codex',Image:'codex-harness:1.0.0-alpha17@sha256:1c85…',Pool:'kagent-coding',Snapshots:'s3://ate-snapshots/kagent/coding'}},
+ {id:'h-def',k:'Harness',x:C.C,y:Q(1),n:'default',s:'kagent (ADK) · alpha17',f:{Runtime:'kagent (golang-adk)',Image:'golang-adk:1.0.0-alpha17@sha256:d20d…',Pool:'kagent-default',Snapshots:'s3://ate-snapshots/kagent/default'}},
+ {id:'h-high',k:'Harness',x:C.C,y:Q(2),n:'high',s:'kagent (ADK) · alpha17',f:{Runtime:'kagent (golang-adk)',Image:'golang-adk:1.0.0-alpha17@sha256:d20d…',Pool:'kagent-high',Snapshots:'s3://ate-snapshots/kagent/high'}},
+ {id:'stpl',k:'SandboxTemplate',x:C.C,y:Q(3.3),n:'SandboxTemplate',s:'available · 0 in use',ghost:1},
+ {id:'p-coding',k:'WorkerPool',x:C.D,y:Q(0),n:'kagent-coding',s:'3 × gVisor workers',f:{Replicas:'3/3 ready',Sandbox:'gvisor → gvisor-default',Image:'ateworker-gvisor:v0.6.0-b15382d4'}},
+ {id:'p-def',k:'WorkerPool',x:C.D,y:Q(1),n:'kagent-default',s:'3 × gVisor workers',f:{Replicas:'3/3 ready',Sandbox:'gvisor → gvisor-default',Owner:'Helm values (substrateWorkerPool)'}},
+ {id:'p-high',k:'WorkerPool',x:C.D,y:Q(2),n:'kagent-high',s:'2 × gVisor · substrate-high',f:{Replicas:'2/2 ready',PriorityClass:'substrate-high (100000, never preempts)',Sandbox:'gvisor → gvisor-default'}},
+ {id:'sbc',k:'SandboxConfig',x:C.D,y:Q(3.3),n:'gvisor-default',s:'SandboxConfig · gVisor v4',f:{Used:'by all 3 pools'}},
+ {id:'ate-api',k:'System',x:C.E,y:Q(0),n:'ate-api-server',s:'× 2 · actors & snapshots',f:{Image:'ateapi:v0.6.0-b15382d4',Auth:'bootstrapOwners incl. kagent-controller SPIFFE ID'},b:'Substrate API. Prepares actor templates (golden snapshots), places sessions onto workers, tracks revisions, answers egress-policy lookups.'},
+ {id:'ate-ctl',k:'System',x:C.E,y:Q(0.9),n:'ate-controller',s:'reconciles WorkerPools',f:{Image:'atecontroller:v0.6.0-b15382d4'},b:'Turns WorkerPool objects into worker Deployments.'},
+ {id:'atelet',k:'System',x:C.E,y:Q(1.8),n:'atelet',s:'DaemonSet · per node',f:{Image:'atelet:v0.6.0-b15382d4'},b:'Node agent beside the workers: runs gVisor (runsc), snapshot/restore and the credential broker.'},
+ {id:'idp',k:'System',x:C.E,y:Q(2.7),n:'ate-idp-server',s:'× 2 · actor identity',f:{Issuer:'https://idp.ate-system.svc'},b:'Issues per-actor JWT identities used by the router, egress and the controller.'},
+ {id:'cred',k:'System',x:C.E,y:Q(3.6),n:'k8s-credential-provider',s:'Secrets → sandbox creds',b:'Credential provider backed by Kubernetes Secrets, used for injection at egress.'},
+ {id:'router',k:'System',x:C.F,y:Q(0),n:'atenet-router',s:'agentgateway · ingress to actors',f:{Routing:'ate-target-actor header'},b:'Ingress into sandboxes: the controller sends each turn here and it routes to the right actor and worker.'},
+ {id:'egress',k:'System',x:C.F,y:Q(1),n:'atenet-egress',s:'agentgateway · sandbox egress',f:{CA:'ate-system/egress-mitm-ca-pool',Enforces:'EgressPolicy origins per actor'},b:'All outbound traffic from sandboxes goes through here. Origins not granted by an EgressPolicy (or by the agent\'s own model/MCP config) are refused.'},
+ {id:'s3',k:'System',x:C.F,y:Q(2.3),n:'rustfs (S3)',s:'s3://ate-snapshots',b:'S3-compatible store for golden snapshots, session checkpoints and user snapshots (fork points).'},
+];
+const byId=Object.fromEntries(N.map(n=>[n.id,n]));
+
+/* ---------- Edges: [from,to,type]  ref = spec reference, plat = platform wiring, data = request path, pol = shown on hover ---------- */
+const AGT=[['a-codex','t-codex','h-coding'],['a-forti','t-forti','h-def'],['a-k8s','t-k8s','h-def'],['a-k8sp','t-k8sp','h-high'],['a-cve','t-cve','h-def'],['a-fgcve','t-fgcve','h-def'],['a-oss','t-oss','h-def'],['a-audit','t-audit','h-high']];
+const E=[
+ ...AGT.flatMap(([a,t,h])=>[[a,t,'ref'],[a,h,'ref']]),
+ ['t-codex','m-codex','ref'],...['t-forti','t-k8s','t-k8sp','t-cve','t-fgcve','t-oss','t-audit'].map(t=>[t,'m-def','ref']),
+ ['t-forti','mcp-f','ref'],['t-k8s','mcp-k','ref'],['t-k8sp','mcp-k','ref'],['t-cve','mcp-k','ref'],['t-fgcve','mcp-f','ref'],
+ ...['t-forti','t-cve','t-fgcve','t-oss','t-audit'].map(t=>[t,'mcp-gh','ref']),
+ ['m-def','u-spark','ref'],['m-codex','u-agw','ref'],['u-agw','u-oai','ref'],['u-bed','u-aws','ref'],
+ ['mcp-k','u-tools','ref'],['mcp-f','u-fmcp','ref'],['u-fmcp','u-fg','ref'],['mcp-gh','u-ghmcp','ref'],['u-ghmcp','u-repo','ref'],['u-ghmcp','u-orgs','ref'],
+ ['h-coding','p-coding','ref'],['h-def','p-def','ref'],['h-high','p-high','ref'],
+ ['p-coding','sbc','ref'],['p-def','sbc','ref'],['p-high','sbc','ref'],
+ ['a-cve','egp-osv','pol'],['a-cve','egp-gh','pol'],['a-fgcve','egp-fg','pol'],['a-fgcve','egp-gh','pol'],['a-forti','egp-gh','pol'],['a-oss','egp-gh','pol'],['a-audit','egp-gh','pol'],
+ ...['a-forti','a-cve','a-fgcve','a-oss','a-audit'].map(a=>['sched',a,'pol']),
+ ['ui','ctl','plat'],['sched','ctl','plat'],['ctl','pg','plat'],['ctl','otel','plat'],['ctl','ate-api','plat'],['ctl','router','plat'],
+ ['ate-ctl','p-coding','plat'],['ate-ctl','p-def','plat'],['ate-ctl','p-high','plat'],
+ ['h-coding','s3','plat'],['h-def','s3','plat'],['h-high','s3','plat'],['egp-osv','egress','plat'],['egp-fg','egress','plat'],['egp-gh','egress','plat'],['cred','egress','plat'],['stpl','p-coding','plat'],
+ ...['p-coding','p-def','p-high'].flatMap(p=>[['ate-api',p,'data'],['router',p,'data'],[p,'egress','data'],[p,'s3','data']]),
+ ...['u-spark','u-agw','u-bed','u-tools','u-fmcp','u-ghmcp','u-osv','u-fguard'].map(u=>['egress',u,'data']),
+];
+
+/* ---------- Trace scenarios per agent ---------- */
+const PUB={t:'Publishes the report: push_files through GitHub MCP into sebbycorp/agent-summary (one commit, latest.md + dated copy).',e:[['egress','u-ghmcp'],['u-ghmcp','u-repo']],n:['u-ghmcp','u-repo']};
+const AG={
+ 'k8s-assistant':{a:'a-k8s',t:'t-k8s',h:'h-def',p:'p-def',m:'u-spark',q:'How many pods are running in ate-system?',model:'qwen3.8-flash-next on the DGX Spark',hops:[{t:'The model picks a tool: k8s_get_resources on kagent-tools.',e:[['egress','u-tools']],n:['u-tools']}]},
+ 'k8s-assistant-priority':{a:'a-k8sp',t:'t-k8sp',h:'h-high',p:'p-high',m:'u-spark',q:'Any Warning events in kagent?',model:'qwen3.8-flash-next on the DGX Spark',hops:[{t:'The model picks a tool: k8s_get_events on kagent-tools.',e:[['egress','u-tools']],n:['u-tools']}]},
+ 'fortigate':{a:'a-forti',t:'t-forti',h:'h-def',p:'p-def',m:'u-spark',sched:'09:00 fortigate-daily-resource-usage',model:'qwen3.8-flash-next on the DGX Spark',hops:[{t:'Calls fg_resource_usage and fg_system_status on fortigate-mcp, which queries the firewall REST API.',e:[['egress','u-fmcp'],['u-fmcp','u-fg']],n:['u-fmcp','u-fg']},PUB]},
+ 'k8s-cve-checker':{a:'a-cve',t:'t-cve',h:'h-def',p:'p-def',m:'u-spark',sched:'09:15 k8s-daily-cve-check',model:'qwen3.8-flash-next on the DGX Spark',hops:[{t:'Inventories the Kubernetes version and container images with kagent-tools.',e:[['egress','u-tools']],n:['u-tools']},{t:'Runs wget in its sandbox shell against OSV.dev. Only allowed because EgressPolicy allow-osv grants https://api.osv.dev.',e:[['egress','u-osv']],n:['egp-osv','u-osv']},PUB]},
+ 'fortigate-cve-watch':{a:'a-fgcve',t:'t-fgcve',h:'h-def',p:'p-def',m:'u-spark',sched:'09:30 fortigate-daily-fortiguard-cve',model:'qwen3.8-flash-next on the DGX Spark',hops:[{t:'Reads the FortiOS version with fg_system_status.',e:[['egress','u-fmcp'],['u-fmcp','u-fg']],n:['u-fmcp','u-fg']},{t:'Fetches the FortiGuard PSIRT and Outbreak Alert RSS feeds with wget (EgressPolicy allow-fortiguard).',e:[['egress','u-fguard']],n:['egp-fg','u-fguard']},PUB]},
+ 'oss-update-watcher':{a:'a-oss',t:'t-oss',h:'h-def',p:'p-def',m:'u-spark',sched:'08:00 agentgateway-daily-updates',model:'qwen3.8-flash-next on the DGX Spark',hops:[{t:'Searches github.com/agentgateway for releases and merged PRs since the last report, through GitHub MCP.',e:[['egress','u-ghmcp'],['u-ghmcp','u-orgs']],n:['egp-gh','u-ghmcp','u-orgs']},PUB]},
+ 'agent-summary-auditor':{a:'a-audit',t:'t-audit',h:'h-high',p:'p-high',m:'u-spark',sched:'10:30 agent-summary-daily-audit',model:'qwen3.8-flash-next on the DGX Spark',hops:[{t:'Reads every reports/<name>/latest.md in agent-summary and checks today\'s files exist.',e:[['egress','u-ghmcp'],['u-ghmcp','u-repo']],n:['u-ghmcp','u-repo']},{t:'Writes reports/_status/latest.md: OK / MISSING / STALE per report.',e:[['egress','u-ghmcp'],['u-ghmcp','u-repo']],n:['u-repo']}]},
+ 'codex-coder':{a:'a-codex',t:'t-codex',h:'h-coding',p:'p-coding',m:'u-agw',m2:'u-oai',q:'Write and test a fizzbuzz in Go',model:'gpt-5.4 (Responses API) via agentgateway → OpenAI',hops:[{t:'Tools: Codex built-in shell and file tools inside the gVisor sandbox (no network hop).',e:[],n:['p-coding']}]},
+};
+function scenario(name){
+ const s=AG[name];
+ const first=s.sched
+  ?{t:`The ${s.sched} schedule fires. The controller starts a new conversation with the schedule's prompt.`,e:[['sched','ctl']],n:['sched','ctl']}
+  :{t:`User asks “${s.q}” in the kagent UI. The chat streams over /a2a to the controller.`,e:[['ui','ctl']],n:['ui','ctl']};
+ const steps=[first,
+  {t:`The controller resolves the Agent: template ${byId[s.t].n} + harness ${byId[s.h].n}.`,e:[],n:[s.a,s.t,s.h],ref:[[s.a,s.t],[s.a,s.h]]},
+  {t:`ate-api-server restores the golden snapshot onto a free worker in ${byId[s.p].n}. That worker becomes this session's sandbox.`,e:[['ctl','ate-api'],['ate-api',s.p]],n:['ate-api',s.p],ref:[[s.h,s.p]]},
+  {t:`The turn is routed into the sandbox through atenet-router (ate-target-actor header).`,e:[['ctl','router'],['router',s.p]],n:['router']},
+  {t:`The runtime calls the model, ${s.model}, and leaves through atenet-egress.`,e:[[s.p,'egress'],['egress',s.m]].concat(s.m2?[[s.m,s.m2]]:[]),n:['egress',s.m].concat(s.m2?[s.m2]:[])},
+  ...s.hops.map(h=>({...h,e:h.e.length&&h.e[0][0]==='egress'?[[s.p,'egress'],...h.e]:h.e})),
+  {t:`The session is checkpointed to S3 (snapshotPolicy), so it resumes on any worker later.`,e:[[s.p,'s3']],n:['s3']},
+ ];
+ return steps;
+}
+
+/* ---------- Render ---------- */
+const svg=document.getElementById('map'),NS='http://www.w3.org/2000/svg';
+const el=(t,a={},p=svg)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);p.appendChild(e);return e};
+const layerColor=n=>L[KINDS[n.k].layer];
+
+// grid + bands
+const defs=el('defs');const pat=el('pattern',{id:'g',width:24,height:24,patternUnits:'userSpaceOnUse'},defs);
+el('path',{d:'M24 0H0V24',fill:'none',stroke:'var(--grid)','stroke-width':1},pat);
+el('rect',{x:0,y:0,width:1290,height:948,fill:'url(#g)'});
+el('rect',{x:10,y:10,width:1270,height:543,rx:10,fill:'none',stroke:'var(--build)','stroke-opacity':.35});
+el('rect',{x:10,y:569,width:1270,height:369,rx:10,fill:'none',stroke:'var(--run)','stroke-opacity':.35});
+el('text',{x:26,y:36,class:'band-title',fill:'var(--build)'}).textContent='Build · what the agent is · kagent (api.kagent.dev/v1alpha3)';
+el('text',{x:26,y:595,class:'band-title',fill:'var(--run)'}).textContent='Run · where it executes · Agent Substrate (ate.dev · ns ate-system)';
+[['Access & control',C.A,72],['Agent',C.B,72],['AgentTemplate',C.C,72],['Models & tools',C.D,72],['Upstreams',C.E,72],['SaaS, devices & repos',C.F,72],
+ ['EgressPolicy',C.B,633],['Harness',C.C,633],['WorkerPool',C.D,633],['Substrate control plane',C.E,633],['Network & storage',C.F,633]]
+ .forEach(([t,x,y])=>el('text',{x,y,class:'col-title'}).textContent=t);
+
+// legend (bottom-left of Run band)
+const lg=el('g',{class:'legend',transform:'translate(24,640)'});
+el('text',{x:0,y:16,class:'lt'},lg).textContent='How a chat runs';
+['Agent applied → runtime boots','once → golden snapshot.','Each chat forks it into its','own gVisor sandbox. Sessions','checkpoint to S3 and resume','on any worker.','','Colour = layer'].forEach((t,i)=>el('text',{x:0,y:40+i*19},lg).textContent=t);
+[['var(--build)','kagent build objects'],['var(--model)','models & tools'],['var(--run)','Substrate runtime'],['var(--muted)','platform services']].forEach(([c,t],i)=>{el('rect',{x:0,y:192+i*20,width:10,height:10,rx:2,fill:c},lg);el('text',{x:18,y:201+i*20},lg).textContent=t});
+
+const anchor=(a,b)=>{const ax=a.x+W/2,ay=a.y+H/2,bx=b.x+W/2,by=b.y+H/2;
+ if(Math.abs(bx-ax)<40) return by>ay?[[ax,a.y+H],[bx,b.y],'v']:[[ax,a.y],[bx,b.y+H],'v'];
+ return bx>ax?[[a.x+W,ay],[b.x,by],'h']:[[a.x,ay],[b.x+W,by],'h'];};
+const gE=el('g'),gN=el('g');
+const edgeEls=E.map(([f,t,type])=>{const a=byId[f],b=byId[t];const [[x1,y1],[x2,y2],o]=anchor(a,b);
+ const same=Math.abs(a.x-b.x)<40&&Math.abs(a.y-b.y)>H*1.5;
+ const d=same?`M${a.x} ${a.y+H/2}C${a.x-30} ${a.y+H/2} ${b.x-30} ${b.y+H/2} ${b.x} ${b.y+H/2}`:o==='h'?`M${x1} ${y1}C${(x1+x2)/2} ${y1} ${(x1+x2)/2} ${y2} ${x2} ${y2}`:`M${x1} ${y1}C${x1} ${(y1+y2)/2} ${x2} ${(y1+y2)/2} ${x2} ${y2}`;
+ const p=el('path',{d,class:`edge ${type}`},gE);p.dataset.f=f;p.dataset.t=t;p.dataset.type=type;return p;});
+const edgeKey=(f,t,type)=>edgeEls.find(p=>p.dataset.f===f&&p.dataset.t===t&&(!type||p.dataset.type===type));
+
+const nodeEls={};
+const finePointer=matchMedia('(hover: hover) and (pointer: fine)').matches;
+const reduceMotion=()=>matchMedia('(prefers-reduced-motion: reduce)').matches;
+// entrance order: left-to-right by column, top-to-bottom within it (Build band first)
+const order=[...N].sort((a,b)=>(a.y>560)-(b.y>560)||a.x-b.x||a.y-b.y).map(n=>n.id);
+N.forEach(n=>{const outer=el('g',{class:'node'+(n.ghost?' ghost':''),transform:`translate(${n.x},${n.y})`,tabindex:0,role:'button','aria-label':`${n.k} ${n.n}`},gN);
+ const g=el('g',{class:'body',style:`--i:${order.indexOf(n.id)}`},outer);
+ el('rect',{class:'box',width:W,height:H,rx:6},g);
+ el('rect',{class:'tag',width:4,height:H-12,x:0,y:6,rx:2,fill:layerColor(n)},g);
+ const t1=el('text',{class:'n',x:12,y:19},g);t1.textContent=n.n.length>24?n.n.slice(0,23)+'…':n.n;
+ el('text',{class:'s',x:12,y:35},g).textContent=n.s||'';
+ const kindTxt=el('text',{x:W-8,y:13,'text-anchor':'end',style:'font:600 9px var(--display);letter-spacing:.08em;text-transform:uppercase',fill:layerColor(n)},g);
+ kindTxt.textContent='';   // column headers name the kind; per-node tags collided with long names
+ // hover-to-trace only on real pointers: on touch a tap would fire mouseenter and dim the map
+ if(finePointer){outer.addEventListener('mouseenter',()=>focusNode(n.id));outer.addEventListener('mouseleave',unfocus);}
+ outer.addEventListener('focus',()=>{if(outer.matches(':focus-visible'))focusNode(n.id)});outer.addEventListener('blur',unfocus);
+ outer.addEventListener('click',()=>select(n.id));outer.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();select(n.id)}});
+ nodeEls[n.id]=outer;});
+
+function focusNode(id){if(tracing)return;svg.classList.add('focus');nodeEls[id].classList.add('hl');
+ edgeEls.forEach(p=>{if((p.dataset.f===id||p.dataset.t===id)&&visible(p)){p.classList.add('hl');nodeEls[p.dataset.f].classList.add('hl');nodeEls[p.dataset.t].classList.add('hl')}})}
+function unfocus(){svg.classList.remove('focus');document.querySelectorAll('.hl').forEach(e=>e.classList.remove('hl'))}
+function visible(p){const t=p.dataset.type;return t==='ref'?!svg.classList.contains('hide-ref'):t==='plat'?!svg.classList.contains('hide-plat'):svg.classList.contains('show-data')}
+
+/* ---------- Inspector ---------- */
+const insp=document.getElementById('insp');
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+// Swap inspector content with a short blur crossfade: the eye reads one object changing, not two swapping.
+function show(html){insp.innerHTML=html;
+ const frames=reduceMotion()?[{opacity:.4},{opacity:1}]:[{opacity:.35,filter:'blur(2px)',transform:'translateY(4px)'},{opacity:1,filter:'blur(0)',transform:'none'}];
+ insp.animate(frames,{duration:220,easing:'cubic-bezier(0.23,1,0.32,1)'});}
+// Label swap on a button (Copy -> Copied) with the same blur bridge.
+function swapLabel(btn,text){const l=btn.querySelector('.lbl')||btn;l.classList.add('swap');setTimeout(()=>{l.textContent=text;l.classList.remove('swap')},110)}
+let selected=null,tabPref='overview';
+try{tabPref=localStorage.getItem('smap-tab')||'overview'}catch(e){}
+const CFG=JSON.parse(document.getElementById('cfgdata').textContent);
+const SRC={System:'live Deployment (env shown by name only)',Upstream:'live object'};
+// Line-by-line YAML highlighter. Tracks block scalars (key: | or >) so prompt text
+// that happens to contain "word:" is shown as text, not as a key.
+function hlYaml(src){let block=-1;const ind=s=>s.match(/^\s*/)[0].length;
+ return src.split('\n').map(line=>{let html;
+  if(block>=0&&(line.trim()===''||ind(line)>block)){html=`<span class="t">${esc(line)}</span>`}
+  else{block=-1;
+   if(/^\s*#/.test(line))html=`<span class="c">${esc(line)}</span>`;
+   else{const m=line.match(/^(\s*(?:- )?)([^:#\s][^:]*?):(\s|$)(.*)$/);
+    if(m){html=`<span class="d">${esc(m[1])}</span><span class="k">${esc(m[2])}</span>:${m[3]}${val(m[4])}`;
+     if(/^[|>][-+]?$/.test(m[4].trim()))block=ind(line)+(m[1].includes('- ')?2:0)}
+    else if(/^\s*- /.test(line))html=esc(line).replace(/^(\s*- )(.*)$/,(_,a,b)=>`<span class="d">${a}</span>${val(b)}`);
+    else html=esc(line)}}
+  return `<span class="l">${line.trim()===''?'​':html}</span>`}).join('')}
+function val(v){if(!v)return '';
+  const ci=v.search(/(^|\s)#\s/);if(ci>=0){const body=v.slice(0,ci),cm=v.slice(ci);return (body?val(body):'')+`<span class="c">${esc(cm)}</span>`}
+  const e=esc(v);
+  if(/^(true|false|null|-?\d+(\.\d+)?)$/.test(v))return `<span class="n">${e}</span>`;
+  if(/^[|>]-?$/.test(v))return `<span class="d">${e}</span>`;
+  return `<span class="s">${e}</span>`}
+function copyBtn(id){return `<button class="btn ghost" type="button" data-copy="${id}"><span class="lbl">Copy</span></button>`}
+function wireCopy(root){root.querySelectorAll('[data-copy]').forEach(b=>b.onclick=()=>{const pre=document.getElementById(b.dataset.copy);const txt=pre.dataset.raw||pre.textContent;
+  (navigator.clipboard?navigator.clipboard.writeText(txt):Promise.reject()).then(()=>swapLabel(b,'Copied'),()=>{const r=document.createRange();r.selectNodeContents(pre);const s=getSelection();s.removeAllRanges();s.addRange(r);swapLabel(b,'Selected')}).then(()=>setTimeout(()=>swapLabel(b,'Copy'),1600))})}
+function select(id){clearGuide();if(selected)nodeEls[selected].classList.remove('sel');selected=id;nodeEls[id].classList.add('sel');
+ const n=byId[id],K=KINDS[n.k];const color=L[K.layer];const cfg=CFG[id]||[];
+ const facts=n.f?`<dl class="facts">${Object.entries(n.f).map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`:'';
+ const blurb=n.b||K.blurb;
+ const opts=K.opts.length?`<h3>Special options</h3><ul class="opts">${K.opts.map(([f,d])=>`<li><code>${esc(f)}</code><span>${esc(d)}</span></li>`).join('')}</ul>`:'';
+ const snip=K.snip?`<h3>Snippet</h3><div class="snip"><pre id="snipTxt">${esc(K.snip)}</pre>${copyBtn('snipTxt')}</div>`:'';
+ const overview=`${blurb?`<p class="blurb">${esc(blurb)}</p>`:''}${facts}${opts}${snip}`;
+ const fileName=t=>{const i=t.indexOf('/');if(i>0)return [t.slice(0,i),t.slice(i+1)];
+  if(t.includes('ConfigMap'))return ['configmap','kagent-controller · controller.yaml'];
+  if(t==='schedules')return ['kagent ui','schedules (6)'];
+  if(t==='dgx-spark-svc')return ['service','dgx-spark'];
+  if(t==='agw-openai-backend')return ['agentgatewaybackend','openai'];
+  if(t==='agw-bedrock-backend')return ['agentgatewaybackend','bedrock-claude-haiku-4-5'];
+  if(t==='atelet')return ['daemonset','atelet'];
+  return ['deployment',t]};
+ const srcLabel=n.k==='Schedule'?'As configured in the UI':(SRC[n.k]?SRC[n.k][0].toUpperCase()+SRC[n.k].slice(1):'Live from omni-viper');
+ const config=cfg.length?`<div class="cfg"><div class="src">${esc(srcLabel)}</div>${cfg.map(([title,yaml],i)=>{const [kind,name]=fileName(title);
+   return `<section class="file"><div class="file-head"><div class="file-name"><span class="kind">${esc(kind)}</span><b title="${esc(name)}">${esc(name)}</b></div>${copyBtn('cfg'+i)}</div><pre class="yaml" id="cfg${i}">${hlYaml(yaml)}</pre></section>`}).join('')}<p class="hint">Exported 2026-11-04 · status, managedFields and server fields removed · secret values never included.</p></div>`
+   :`<p class="empty">${n.ghost?'Not deployed on omni-viper, so there is no live config. See the snippet under Overview.':'No Kubernetes object behind this one (external service). See Overview.'}</p>`;
+ const tab=cfg.length?tabPref:'overview';
+ show(`<div><div class="k-eyebrow" style="color:${color}">${esc(n.k==='System'?'Platform service':n.k==='Upstream'?'Upstream':n.k)}${n.ghost?' · not deployed':''}</div><h2>${esc(n.n)}</h2><div class="api">${esc(n.k==='System'||n.k==='Upstream'?(n.s||''):K.api)}</div></div>
+  <div class="tabs" role="tablist" aria-label="Inspector view"><button class="tab" role="tab" id="tab-overview" aria-selected="${tab==='overview'}" aria-controls="pane">Overview</button><button class="tab" role="tab" id="tab-config" aria-selected="${tab==='config'}" aria-controls="pane"${cfg.length?'':' disabled'}>${cfg.length?'<span class="live"></span>':''}Live config${cfg.length>1?`<span class="count">${cfg.length}</span>`:''}</button></div>
+  <div id="pane" role="tabpanel">${tab==='config'?config:overview}</div>`);
+ cfg.forEach(([,yaml],i)=>{const p=document.getElementById('cfg'+i);if(p)p.dataset.raw=yaml});
+ wireCopy(insp);
+ const pane=document.getElementById('pane');
+ const setTab=t=>{tabPref=t;try{localStorage.setItem('smap-tab',t)}catch(e){}
+  document.getElementById('tab-overview').setAttribute('aria-selected',t==='overview');document.getElementById('tab-config').setAttribute('aria-selected',t==='config');
+  pane.innerHTML=t==='config'?config:overview;cfg.forEach(([,yaml],i)=>{const p=document.getElementById('cfg'+i);if(p)p.dataset.raw=yaml});wireCopy(pane);
+  pane.animate(reduceMotion()?[{opacity:.5},{opacity:1}]:[{opacity:.4,filter:'blur(2px)'},{opacity:1,filter:'blur(0)'}],{duration:180,easing:'cubic-bezier(0.23,1,0.32,1)'})};
+ document.getElementById('tab-overview').onclick=()=>setTab('overview');
+ if(cfg.length)document.getElementById('tab-config').onclick=()=>setTab('config');
+ insp.querySelector('[role=tablist]').onkeydown=e=>{if(!cfg.length)return;if(e.key==='ArrowRight'||e.key==='ArrowLeft'){e.preventDefault();const t=tabPref==='overview'?'config':'overview';setTab(t);document.getElementById('tab-'+t).focus()}};
+}
+function intro(){show(`<div><div class="k-eyebrow" style="color:var(--run)">Start here</div><h2>Five objects build an agent</h2></div>
+<p class="hint">New here? Follow the <b>Build guide</b> above, step by step. Each step lights up its components on the map.</p>
+<p class="blurb">An <b>Agent</b> pairs a <b>Template</b> (what it does: prompt, <b>Model</b>, MCP tools) with a <b>Harness</b> (how it runs), which points at a <b>WorkerPool</b> of sandboxed workers.</p>
+<ul class="opts"><li><code>Authors own</code><span>AgentTemplate · Agent</span></li><li><code>Platform team owns</code><span>ModelConfig · RemoteMCPServer · Harness · WorkerPool · EgressPolicy</span></li><li><code>Click a node</code><span>Overview has the kind's options and a snippet; <b>Config</b> shows the live YAML from omni-viper.</span></li><li><code>Dashed outlines</code><span>Kinds available in alpha12 but not deployed on omni-viper yet.</span></li></ul>
+<h3>Trace a chat</h3><ol class="steps" id="steps"><li><span>Pick an agent above and press <b>Play request path</b>. Scheduled agents start from the Schedules node.</span></li></ol>`);}
+intro();
+
+/* ---------- Trace animation ---------- */
+const sel=document.getElementById('agentSel');Object.keys(AG).forEach(k=>{const o=document.createElement('option');o.value=k;o.textContent=k;sel.appendChild(o)});
+let tracing=false,timer=null,runId=0;
+const gP=el('g');                       // packets ride above edges and nodes
+const easeInOut=t=>t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;   // matches the on-screen-movement curve
+// A packet travels one hop along an edge path. Explanatory motion: allowed to be slower than UI feedback.
+function packet(path,dur,id){return new Promise(res=>{
+ if(reduceMotion()){res();return}
+ const len=path.getTotalLength(),halo=el('circle',{r:9,class:'packet-halo'},gP),dot=el('circle',{r:4,class:'packet'},gP);
+ const t0=performance.now();
+ const tick=now=>{if(id!==runId){halo.remove();dot.remove();res();return}
+  const k=Math.min(1,(now-t0)/dur),p=path.getPointAtLength(easeInOut(k)*len);
+  for(const c of [halo,dot]){c.setAttribute('cx',p.x);c.setAttribute('cy',p.y)}
+  if(k<1)requestAnimationFrame(tick);
+  else{halo.animate([{opacity:.22,transform:'scale(1)'},{opacity:0,transform:'scale(1.8)'}],{duration:220,easing:'cubic-bezier(0.23,1,0.32,1)'}).onfinish=()=>halo.remove();
+   dot.animate([{opacity:1},{opacity:0}],{duration:160,easing:'ease'}).onfinish=()=>dot.remove();res()}};
+ requestAnimationFrame(tick);})}
+function clearTrace(){clearGuide();tracing=false;runId++;clearTimeout(timer);gP.replaceChildren();
+ document.querySelectorAll('.lit').forEach(e=>e.classList.remove('lit'));setPlayLabel('Play request path')}
+function setPlayLabel(t){const b=document.getElementById('play');const l=b.querySelector('.lbl');if(l.textContent!==t)swapLabel(b,t)}
+async function play(){clearTrace();unfocus();tracing=true;const id=++runId;
+ if(selected){nodeEls[selected].classList.remove('sel');selected=null}
+ setPlayLabel('Replay');
+ const name=sel.value,steps=scenario(name);
+ show(`<div><div class="k-eyebrow" style="color:var(--edge)">Request path</div><h2>${esc(name)}</h2><div class="api">${esc(byId[AG[name].a].s)} · ${esc(byId[AG[name].p].n)}</div></div><ol class="steps" id="steps">${steps.map(s=>`<li>${esc(s.t)}</li>`).join('')}</ol><p class="hint">Click any node to inspect it. Clear resets the map.</p>`);
+ const lis=[...document.querySelectorAll('#steps li')];
+ for(let i=0;i<steps.length;i++){if(id!==runId)return;const s=steps[i];
+  lis.forEach(l=>l.classList.remove('now'));lis[i].classList.add('on','now');
+  (s.n||[]).forEach(nid=>nodeEls[nid].classList.add('lit'));
+  (s.ref||[]).forEach(([f,t])=>{const p=edgeKey(f,t);if(p)p.classList.add('lit')});
+  const hops=(s.e||[]).map(([f,t])=>edgeKey(f,t,'data')||edgeKey(f,t)).filter(Boolean);
+  for(const p of hops){if(id!==runId)return;p.classList.add('lit');await packet(p,560,id)}
+  if(!hops.length&&!reduceMotion())await new Promise(r=>timer=setTimeout(r,700));
+  if(!reduceMotion())await new Promise(r=>timer=setTimeout(r,260));
+ }
+ if(id===runId)lis.forEach(l=>l.classList.remove('now'));}
+document.getElementById('play').onclick=play;
+document.getElementById('stop').onclick=()=>{clearTrace();intro()};
+
+/* ---------- Build guide: the order to create things in ---------- */
+const GUIDE=[
+ {t:'Platform in place',who:'Platform team · once per cluster',n:['ctl','pg','ate-api','ate-ctl','atelet','router','egress','s3'],
+  why:'Agent Substrate (ate-system) and kagent Enterprise must be running before any agent exists. Substrate supplies the sandboxes, the router and egress, and the snapshot store; kagent supplies the controller and UI. Both share Postgres.',
+  snip:`# Substrate first, then kagent - versions must match
+# (kagent alpha12 <-> Substrate 0.6, see the release's go.mod)
+helm upgrade -i substrate-crds  oci://us-docker.pkg.dev/solo-public/enterprise-substrate-helm/substrate-crds  -n ate-system
+helm upgrade -i substrate       oci://us-docker.pkg.dev/solo-public/enterprise-substrate-helm/substrate       -n ate-system
+helm upgrade -i kagent-crds     oci://us-docker.pkg.dev/solo-public/kagent-enterprise-helm/charts/kagent-enterprise-crds -n kagent
+helm upgrade -i kagent          oci://us-docker.pkg.dev/solo-public/kagent-enterprise-helm/charts/kagent-enterprise      -n kagent`,
+  check:'kubectl -n ate-system get pods && kubectl -n kagent get deploy kagent-controller',
+  gotcha:'Set controller.substrateClientCertificate.enabled and add the controller SPIFFE ID to Substrate bootstrapOwners, or the controller cannot reach ate-api.'},
+ {t:'WorkerPool',who:'Platform team',n:['p-def','sbc','ate-ctl'],
+  why:'A pool of pre-warmed gVisor (or microVM) sandbox workers. Its size caps how many sessions run at once in this tier, so build it before anything that runs on it.',
+  snip:`apiVersion: ate.dev/v1alpha1
+kind: WorkerPool
+metadata: {name: kagent-default, namespace: kagent}
+spec:
+  replicas: 3
+  sandboxClasses: [{name: gvisor, configRef: {name: gvisor-default}}]
+  workerImage: us-docker.pkg.dev/solo-public/substrate-enterprise/ateworker-gvisor:v0.6.0-b15382d4
+  template: {serviceAccountName: kagent-default}`,
+  check:'kubectl -n kagent get workerpools.ate.dev   # READY = DESIRED, RESOLVED True',
+  gotcha:'workerImage must match the Substrate control-plane version. Keep 2+ workers so a new revision can prepare while the old one serves.'},
+ {t:'Harness',who:'Platform team',n:['h-def','p-def','s3'],
+  why:'Picks the agent runtime (kagent ADK, Codex, Claude or BYO), points at exactly one WorkerPool, and says where snapshots go. A tier = one Harness + its own pool.',
+  snip:`apiVersion: api.kagent.dev/v1alpha3
+kind: Harness
+metadata: {name: default, namespace: kagent}
+spec:
+  kagent: {}
+  substrate:
+    workerPoolRef: {name: kagent-default}
+    snapshotPolicy: {location: s3://ate-snapshots/kagent/default}
+  workload:
+    image: ghcr.io/kagent-dev/kagent/golang-adk:1.0.0-alpha17@sha256:d20d4117…`,
+  check:'kubectl -n kagent get harnesses   # READY stays empty on alpha12; readiness shows on the Agent',
+  gotcha:'The runtime image must match the controller runtime contract (Enterprise alpha12 <-> OSS alpha17), pinned by digest.'},
+ {t:'ModelConfig',who:'Platform team',n:['m-def','u-spark','u-agw'],
+  why:'Which LLM, at which URL, with which key. Self-hosted models are called directly; SaaS models go through agentgateway so the agent never holds the provider key.',
+  snip:`apiVersion: api.kagent.dev/v1alpha3
+kind: ModelConfig
+metadata: {name: default-model-config, namespace: kagent}
+spec:
+  provider: OpenAI
+  model: qwen3.8-flash-next
+  apiKeySecret: kagent-spark-openai
+  apiKeySecretKey: OPENAI_API_KEY
+  openAI:
+    baseUrl: http://dgx-spark.kagent.svc.cluster.local:8000/v1`,
+  check:'kubectl -n kagent get modelconfigs',
+  gotcha:'baseUrl must be a DNS name: a bare IP is rejected. Front a raw IP with a selectorless Service + EndpointSlice.'},
+ {t:'RemoteMCPServer (tools)',who:'Platform team',n:['mcp-k','u-tools','mcp-gh'],
+  why:'Registers an MCP endpoint. The controller connects to it and discovers its tools; templates then allow-list the ones each agent may use.',
+  snip:`apiVersion: api.kagent.dev/v1alpha3
+kind: RemoteMCPServer
+metadata: {name: kagent-tool-server, namespace: kagent}
+spec:
+  description: Built-in Kubernetes tools
+  protocol: STREAMABLE_HTTP
+  url: http://kagent-tools.kagent.svc.cluster.local:8084/mcp`,
+  check:'kubectl -n kagent get remotemcpservers   # ACCEPTED True = tools discovered',
+  gotcha:'Use the full *.svc.cluster.local name: sandbox DNS has no search domains. For auth, use headersFrom (the controller needs the header too).'},
+ {t:'AgentTemplate',who:'Agent author',n:['t-k8s','m-def','mcp-k'],
+  why:'The behaviour: system prompt, model, allow-listed tools (plus skills, sub-agents, output schema). It says nothing about where it runs, so one template can back agents on several tiers.',
+  snip:`apiVersion: api.kagent.dev/v1alpha3
+kind: AgentTemplate
+metadata: {name: k8s-assistant, namespace: kagent}
+spec:
+  modelConfig: {name: default-model-config}
+  systemPrompt: You are a read-only Kubernetes assistant...
+  tools:
+  - mcp:
+      server: {kind: RemoteMCPServer, name: kagent-tool-server}
+      tools: [k8s_get_resources, k8s_get_events]`,
+  check:'kubectl -n kagent get agenttemplates',
+  gotcha:'Allow-list tools explicitly. An MCP server with write tools (e.g. fortigate-mcp) otherwise hands them all to the model.'},
+ {t:'Agent',who:'Agent author',n:['a-k8s','t-k8s','h-def'],
+  why:'Pairs one template with one harness. Substrate boots the runtime once and takes a golden snapshot; every chat forks from it. Moving tiers = changing harnessRef.',
+  snip:`apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata: {name: k8s-assistant, namespace: kagent}
+spec:
+  harnessRef: {name: default}
+  template: {ref: {name: k8s-assistant}}`,
+  check:'kubectl -n kagent get agent k8s-assistant -w   # Ready True = "golden snapshot is ready" (~15s)',
+  gotcha:'If Ready stays False, read ate-api-server logs ("Failed to reconcile actor template") before anything else.'},
+ {t:'Chat, snapshot, fork',who:'Anyone',n:['ui','ctl','router','p-def','s3'],
+  why:'Open the agent in the kagent UI. Each chat gets its own sandbox. The snapshot button next to Send saves the turn (runtime copy to S3); Fork starts a new chat from it.',
+  snip:`# UI
+https://viper.maniak.lab:30501/agents/kagent/k8s-assistant/new
+# Snapshots page
+https://viper.maniak.lab:30501/snapshots`,
+  check:'Ask: "How many pods are running in ate-system?" - expect a k8s_get_resources call',
+  gotcha:'Open sessions hold workers. With every worker busy, new revisions and chats wait for one to free up.'},
+ {t:'Egress + schedules (automation)',who:'Platform team + author',n:['egp-gh','egress','sched','mcp-gh','u-repo'],
+  why:'Last, wire the agent to the outside world: an EgressPolicy grants exact HTTPS origins, and a Schedule runs it daily with a prompt that publishes the result (here, to GitHub sebbycorp/agent-summary).',
+  snip:"apiVersion: api.kagent.dev/v1alpha3\nkind: EgressPolicy\nmetadata: {name: allow-osv, namespace: kagent}\nspec:\n  destinations: [{origin: https://api.osv.dev}]\n---\n# Agent: spec.egressPolicyRefs: [{name: allow-osv}, {name: allow-github-mcp}]\n# Schedule: kagent UI -> Schedules -> New (daily, time zone, prompt, timeout)",
+  check:'kubectl -n kagent get agent <a> -o jsonpath="{.status.conditions}"   # EgressPoliciesApplied True',
+  gotcha:'Wildcards cover exactly one leftmost label (*.example.com OK, *.*.example.com is rejected). Anything not granted is refused at atenet-egress. Give long jobs a generous timeout and finish every prompt with the publish block.'},
+];
+const GUIDE_FULL={"1": "apiVersion: ate.dev/v1alpha1\nkind: WorkerPool\nmetadata:\n  name: kagent-demo\n  namespace: kagent\n  labels:\n    kagent.dev/worker-pool-name: kagent-demo       # lets kagent find the pool\n    kagent.dev/worker-pool-namespace: kagent\nspec:\n  replicas: 2                                      # = max concurrent sessions in this tier\n  sandboxClasses:                                  # names are immutable once set\n  - name: gvisor                                   # gvisor | microvm\n    configRef: {name: gvisor-default}              # SandboxConfig (runtime version/assets)\n  workerImage: us-docker.pkg.dev/solo-public/substrate-enterprise/ateworker-gvisor:v0.6.0-b15382d4\n  template:                                        # shapes the worker pods\n    serviceAccountName: kagent-default\n    priorityClassName: substrate-high              # eviction order under node pressure\n    labels: {tier: demo}\n    annotations: {team: field-eng}\n    nodeSelector: {kubernetes.io/os: linux}        # pin a tier to a node group\n    tolerations:\n    - {key: dedicated, operator: Equal, value: agents, effect: NoSchedule}\n    nodeAffinity:\n      preferredDuringSchedulingIgnoredDuringExecution:\n      - weight: 50\n        preference:\n          matchExpressions: [{key: node-role, operator: In, values: [agents]}]\n    resources:                                     # workers request no CPU by default\n      requests: {memory: 512Mi}\n      limits: {memory: 4Gi}", "2": "apiVersion: api.kagent.dev/v1alpha3\nkind: Harness\nmetadata: {name: demo, namespace: kagent}\nspec:\n  # runtime: pick exactly one of  kagent: {} | codex: {} | claude: {} | byo: {}\n  kagent:\n    compaction:                                    # summarize long sessions to stay in context\n      tokenThreshold: 60000                        # compact when the context passes this\n      compactionInterval: 10                       # ...or every N turns\n      overlapSize: 2                               # turns kept verbatim across the cut\n      eventRetentionSize: 50                       # events kept after compaction\n      summarizer:\n        modelConfigRef: {name: default-model-config}\n        promptTemplate: \"Summarize, keeping decisions and open tasks: {conversation_history}\"   # must contain {conversation_history}\n    memory:                                        # long-term memory across sessions\n      modelConfigRef: {name: default-model-config}\n      ttlDays: 30\n  env:                                             # extra env for the runtime\n  - {name: LOG_LEVEL, value: debug}\n  substrate:\n    workerPoolRef: {name: kagent-default}          # exactly one pool\n    snapshotPolicy:\n      location: s3://ate-snapshots/kagent/demo     # golden snapshots + session checkpoints\n  workload:\n    image: ghcr.io/kagent-dev/kagent/golang-adk:1.0.0-alpha17@sha256:d20d411759d7bb549f00b7d6e8d669b91694aeb57dce847dcd2cbb68aa0d45f3\n    # command: [/app/runtime]                      # override entrypoint (BYO runtimes)\n    # args: [--verbose]", "3": "apiVersion: api.kagent.dev/v1alpha3\nkind: ModelConfig\nmetadata: {name: demo-all-options, namespace: kagent}\nspec:\n  provider: OpenAI          # Anthropic | OpenAI | AzureOpenAI | Ollama | Gemini | GeminiVertexAI |\n                            # AnthropicVertexAI | Bedrock | Mistral | Foundry | SAPAICore\n  model: gpt-4o-mini\n  apiKeySecret: kagent-spark-openai                # Secret name...\n  apiKeySecretKey: OPENAI_API_KEY                  # ...and key\n  stream: true\n  defaultHeaders: {X-Team: field-eng}              # sent on every model call\n  tokenPassthrough: false                          # forward the end user's token instead\n  tls: {disableVerify: false}                      # lab self-signed endpoints only\n  openAI:                                          # one block matching provider\n    baseUrl: http://agentgateway-proxy.agentgateway-system.svc.cluster.local:8080/openai/v1\n    apiFormat: chatCompletions                     # chatCompletions | responses (Codex)\n    temperature: \"0.2\"\n    topP: \"0.9\"\n    maxCompletionTokens: 4096                      # or maxTokens (not both)\n    frequencyPenalty: \"0\"\n    presencePenalty: \"0\"\n    reasoningEffort: low                           # none | minimal | low | medium | high\n    seed: 42\n    \"n\": 1                                         # quote it: a bare n: key is YAML boolean false\n    timeout: 120\n    organization: org-example\n  # anthropic:  {baseUrl, maxTokens, temperature, topK, topP, promptCaching: true, cacheTTL: 5m|1h}\n  # bedrock:    {region, promptCaching, cacheTTL, guardrail: {identifier, version, trace}, connectTimeout, readTimeout}\n  # azureOpenAI:{azureEndpoint, azureDeployment, apiVersion, apiFormat, azureAdToken, maxTokens, temperature, topP}\n  # gemini / geminiVertexAI / anthropicVertexAI / mistral / ollama / foundry / sapAICore: see kubectl explain modelconfig.spec", "4": "apiVersion: api.kagent.dev/v1alpha3\nkind: RemoteMCPServer\nmetadata: {name: demo-all-options, namespace: kagent}\nspec:\n  description: GitHub hosted MCP (repos + pull requests)   # required\n  protocol: STREAMABLE_HTTP                         # STREAMABLE_HTTP | SSE\n  url: https://api.githubcopilot.com/mcp/           # full DNS name (sandbox has no search domains)\n  timeout: 60s                                      # per request\n  sseReadTimeout: 300s                              # SSE only\n  terminateOnClose: true                            # end the MCP session when the chat closes\n  headersFrom:                                      # used by the controller AND the runtime\n  - name: X-MCP-Toolsets\n    value: repos,pull_requests                      # literal value\n  - name: Authorization\n    valueFrom: {type: Secret, name: github-agent-summary, key: authorization}   # or type: ConfigMap\n  tokenPassthrough: false                           # forward the end user's token instead\n  tls: {disableVerify: false}\n  allowedNamespaces:                                # who may reference this server\n    from: Selector                                  # Same (default) | All | Selector\n    selector: {matchLabels: {team: field-eng}}", "5": "apiVersion: api.kagent.dev/v1alpha3\nkind: AgentTemplate\nmetadata: {name: demo-all-options, namespace: kagent}\nspec:\n  description: Read-only Kubernetes helper with every option shown\n  modelConfig: {name: default-model-config}\n  systemPrompt: |                                   # or systemPromptFrom (not both):\n    You are a read-only Kubernetes assistant...\n  # systemPromptFrom: {name: agent-prompts, key: k8s-helper}   # ConfigMap key\n  promptTemplate:                                   # inject data sources into the prompt\n    dataSources:\n    - {name: kagent-builtin-prompts, alias: builtin}\n  tools:\n  - mcp:\n      server: {kind: RemoteMCPServer, name: kagent-tool-server}   # apiGroup optional\n      tools: [k8s_get_resources, k8s_get_events]   # allow-list\n      requireApproval: true                         # human approves each call\n  - subAgent:                                       # delegate to another template as a tool\n      name: firewall\n      description: Ask the FortiGate agent about firewall state\n      templateRef: {name: fortigate}\n  skills:                                           # Agent Skills, pinned\n  - name: runbooks\n    source:\n      git: {url: https://github.com/sebbycorp/skills, commit: 0123456789abcdef0123456789abcdef01234567}\n      path: runbooks                                # also: oci: <ref> | bucket: {s3: {bucket, key, endpoint, versionId}}\n  plugins:                                          # plugin bundles; pick which skills to enable\n  - source: {oci: \"ghcr.io/example/agent-plugins@sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae\"}   # OCI must be digest-pinned\n    skills: [triage]\n  outputSchema:                                     # force structured JSON output\n    type: object\n    properties: {verdict: {type: string}, findings: {type: array}}\n    required: [verdict]\n  outputSchemaStrict: true\n  # outputSchemaFrom: {name: schemas, key: verdict.json}   # instead of inline outputSchema", "6": "apiVersion: api.kagent.dev/v1alpha3\nkind: Agent\nmetadata: {name: demo-all-options, namespace: kagent}\nspec:\n  harnessRef: {name: default}                       # runtime tier; change it to move tiers\n  template:\n    ref: {name: k8s-assistant}                      # shared template...\n    # inline:                                       # ...or every AgentTemplate field inline (not both)\n    #   modelConfig: {name: default-model-config}\n    #   systemPrompt: You are...\n    #   tools: [...]\n  egressPolicyRefs:                                 # extra HTTPS origins for the sandbox\n  - {name: allow-osv}\n  - {name: allow-github-mcp}", "8": "apiVersion: api.kagent.dev/v1alpha3\nkind: EgressPolicy\nmetadata: {name: allow-osv, namespace: kagent}\nspec:\n  destinations:\n  - origin: https://api.osv.dev                 # scheme + exact DNS host\n---\napiVersion: api.kagent.dev/v1alpha3\nkind: EgressPolicy\nmetadata: {name: allow-fortiguard, namespace: kagent}\nspec:\n  destinations:                                 # several origins in one policy\n  - origin: https://filestore.fortinet.com\n  - origin: https://fortiguard.fortinet.com\n---\napiVersion: api.kagent.dev/v1alpha3\nkind: EgressPolicy\nmetadata: {name: allow-github-api, namespace: kagent}\nspec:\n  destinations:\n  - origin: https://api.github.com\n    authentication:                             # credential injection at atenet-egress:\n      header: Authorization                     #   the sandbox never sees the token\n      prefix: \"Bearer \"\n      secretKeyRef: {name: github-agent-summary, key: token}\n  - origin: https://*.githubusercontent.com     # wildcard = exactly one leftmost label\n  - origin: http://internal-api.example.com:8080   # plain http + explicit port\n---\napiVersion: api.kagent.dev/v1alpha3\nkind: EgressPolicy\nmetadata: {name: allow-agentgateway, namespace: kagent}\nspec:\n  destinations:                                 # send SaaS LLM/MCP calls through agentgateway Enterprise\n  - origin: http://agentgateway-proxy.agentgateway-system.svc.cluster.local:8080\n---\n# Agent: attach any number of policies\napiVersion: api.kagent.dev/v1alpha3\nkind: Agent\nmetadata: {name: k8s-cve-checker, namespace: kagent}\nspec:\n  harnessRef: {name: default}\n  template: {ref: {name: k8s-cve-checker}}\n  egressPolicyRefs: [{name: allow-osv}, {name: allow-github-mcp}]\n---\n# Schedule (kagent UI -> Schedules -> New; stored in Postgres, not a CRD)\n# agent:    kagent/k8s-cve-checker\n# repeat:   Daily | Weekly | ...   at 09:15   time zone America/Toronto (DST-aware)\n# prompt:   the task + the publish block for sebbycorp/agent-summary\n# timeout:  2400s (includes queueing + startup)   enabled: true"};
+let snipMode='min';try{snipMode=localStorage.getItem('smap-snip')||'min'}catch(e){}
+const GUIDE_KINDS=[null, "WorkerPool", "Harness", "ModelConfig", "RemoteMCPServer", "AgentTemplate", "Agent", null, ["EgressPolicy", "Schedule"]];
+let guideIdx=0,guideOn=false;
+const wiz=document.getElementById('wizard'),stepper=document.getElementById('stepper'),wizBody=document.getElementById('wizBody');
+stepper.innerHTML=GUIDE.map((s,k)=>`<li><button type="button" data-step="${k}" aria-label="Step ${k+1}: ${esc(s.t)}"><span class="dot">${k+1}</span><span class="lab">${esc(s.t)}</span></button></li>`).join('');
+stepper.querySelectorAll('[data-step]').forEach(b=>b.onclick=()=>guide(+b.dataset.step));
+function setMapLabel(){const b=document.getElementById('gmap');const t=guideOn?'Hide on map':'Show on map';if(b.querySelector('.lbl').textContent!==t)swapLabel(b,t)}
+function clearGuide(){if(!guideOn&&!svg.classList.contains('guiding'))return;guideOn=false;svg.classList.remove('guiding');document.querySelectorAll('.guide').forEach(e=>e.classList.remove('guide'));wiz.classList.remove('on');setMapLabel()}
+function highlight(g){svg.classList.remove('guiding');document.querySelectorAll('.guide').forEach(e=>e.classList.remove('guide'));
+ svg.classList.add('guiding');g.n.forEach(id=>nodeEls[id]&&nodeEls[id].classList.add('guide'));
+ edgeEls.forEach(p=>{if(g.n.includes(p.dataset.f)&&g.n.includes(p.dataset.t)&&p.dataset.type!=='data')p.classList.add('guide')})}
+function optsHtml(i){const ks=[].concat(GUIDE_KINDS[i]||[]).filter(k=>KINDS[k]&&KINDS[k].opts.length);if(!ks.length)return '';
+ return ks.map(k=>`<details class="wopts"${i===8||ks.length===1?' open':''}><summary><span>Options</span><b>${esc(k)}</b><em>${KINDS[k].opts.length}</em></summary><ul class="opts">${KINDS[k].opts.map(([f,d])=>`<li><code>${esc(f)}</code><span>${esc(d)}</span></li>`).join('')}</ul></details>`).join('')}
+function renderStep(animate){const g=GUIDE[guideIdx];const full=GUIDE_FULL[guideIdx];const mode=full?snipMode:'min';const snipText=mode==='full'?full:g.snip;
+ stepper.querySelectorAll('li').forEach((li,k)=>{li.className=k<guideIdx?'done':k===guideIdx?'cur':'';li.querySelector('button').setAttribute('aria-current',k===guideIdx?'step':'false')});
+ stepper.style.setProperty('--progress',guideIdx/(GUIDE.length-1));
+ const cur=stepper.querySelector('li.cur');if(cur&&animate)cur.scrollIntoView({block:'nearest',inline:'nearest',behavior:reduceMotion()?'auto':'smooth'});
+ wizBody.innerHTML=`<div class="wiz-text">
+   <div class="wiz-meta"><span>Step ${guideIdx+1} of ${GUIDE.length}</span><span>·</span><span>${esc(g.who)}</span></div>
+   <h2>${esc(g.t)}</h2>
+   <p class="blurb">${esc(g.why)}</p>
+   ${optsHtml(guideIdx)}
+   <div class="check"><div class="check-head"><span>Check it worked</span>${copyBtn('gcheck')}</div><pre id="gcheck">${esc(g.check)}</pre></div>
+   <div class="gotcha"><b>Gotcha</b><span>${esc(g.gotcha)}</span></div>
+  </div>
+  <div class="file"><div class="file-head"><div class="file-name"><span class="kind">${full?'apply · '+(mode==='full'?'every field, validated':'minimal'):'apply'}</span><b>${esc(g.t)}</b></div>
+   <div class="fh-actions">${full?`<div class="seg" role="radiogroup" aria-label="Snippet detail"><button type="button" role="radio" data-mode="min" aria-checked="${mode==='min'}">Minimal</button><button type="button" role="radio" data-mode="full" aria-checked="${mode==='full'}">All options</button></div>`:''}${copyBtn('gsnip')}</div></div>
+   <pre class="yaml" id="gsnip">${hlYaml(snipText)}</pre>${full&&mode==='full'?`<div class="file-foot">Checked with <code>kubectl apply --dry-run=server</code> on omni-viper · commented lines are alternatives</div>`:''}</div>`;
+ document.getElementById('gsnip').dataset.raw=snipText;
+ wizBody.querySelectorAll('.seg [data-mode]').forEach(b=>b.onclick=()=>{if(b.dataset.mode===snipMode)return;snipMode=b.dataset.mode;try{localStorage.setItem('smap-snip',snipMode)}catch(e){}
+   renderStep(false);const f=wizBody.querySelector('.file');f.animate(reduceMotion()?[{opacity:.5},{opacity:1}]:[{opacity:.4,filter:'blur(2px)'},{opacity:1,filter:'blur(0)'}],{duration:200,easing:'cubic-bezier(0.23,1,0.32,1)'});
+   const nb=wizBody.querySelector(`.seg [data-mode="${snipMode}"]`);if(nb)nb.focus()});document.getElementById('gcheck').dataset.raw=g.check;wireCopy(wizBody);
+ document.getElementById('gprev').disabled=guideIdx===0;
+ const nx=document.getElementById('gnext');const lbl=guideIdx===GUIDE.length-1?'Finish':'Next step';if(nx.querySelector('.lbl').textContent!==lbl)swapLabel(nx,lbl);
+ if(animate)wizBody.animate(reduceMotion()?[{opacity:.5},{opacity:1}]:[{opacity:.35,filter:'blur(2px)',transform:'translateY(4px)'},{opacity:1,filter:'blur(0)',transform:'none'}],{duration:220,easing:'cubic-bezier(0.23,1,0.32,1)'});}
+function guide(i){clearTrace();unfocus();if(selected){nodeEls[selected].classList.remove('sel');selected=null;intro()}
+ guideIdx=Math.max(0,Math.min(GUIDE.length-1,i));guideOn=true;wiz.classList.add('on');highlight(GUIDE[guideIdx]);renderStep(true);setMapLabel()}
+document.getElementById('gprev').onclick=()=>guide(guideIdx-1);
+document.getElementById('gnext').onclick=()=>{if(guideIdx===GUIDE.length-1){clearGuide();guideIdx=0;renderStep(true)}else guide(guideIdx+1)};
+document.getElementById('gmap').onclick=()=>{if(guideOn){clearGuide()}else guide(guideIdx)};
+renderStep(false);
+document.addEventListener('keydown',e=>{if(!guideOn||/input|select|textarea/i.test(document.activeElement.tagName)||document.activeElement.closest('[role=tablist]'))return;
+ if(e.key==='ArrowRight')guide(guideIdx+1);if(e.key==='ArrowLeft')guide(guideIdx-1);if(e.key==='Escape')clearGuide()});
+
+
+/* ---------- Layer toggles ---------- */
+const tog=(btn,cls,invert)=>btn.onclick=()=>{const on=btn.getAttribute('aria-pressed')!=='true';btn.setAttribute('aria-pressed',on);svg.classList.toggle(cls,invert?!on:on)};
+tog(document.getElementById('tRef'),'hide-ref',true);tog(document.getElementById('tPlat'),'hide-plat',true);tog(document.getElementById('tData'),'show-data',false);
+</script>
+</body></html>

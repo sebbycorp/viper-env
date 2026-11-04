@@ -1,0 +1,68 @@
+# Daily auditor for sebbycorp/agent-summary: checks that every scheduled report
+# arrived today and writes reports/_status/{latest.md,YYYY/YYYY-MM-DD.md}.
+# Its only tools are GitHub file tools on that repo; its only egress is GitHub MCP.
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: AgentTemplate
+metadata:
+  name: agent-summary-auditor
+  namespace: kagent
+  labels:
+    app.kubernetes.io/name: agent-summary-auditor
+    app.kubernetes.io/part-of: viper-env
+spec:
+  description: Checks that every scheduled agent report landed in sebbycorp/agent-summary today
+  modelConfig:
+    name: default-model-config
+  systemPrompt: |
+    You audit the GitHub repository sebbycorp/agent-summary (branch main). Agents publish daily reports there as
+      reports/<report>/latest.md   and   reports/<report>/YYYY/YYYY-MM-DD.md
+    Each report file starts with "# <report> - YYYY-MM-DD".
+
+    Expected reports (schedule time, America/Toronto):
+      redteam-posture       07:00   (agent redteam-posture)
+      agentgateway-updates  08:00   (agent oss-update-watcher)
+      kagent-updates        08:20   (agent oss-update-watcher)
+      fortigate-health  09:00   (agent fortigate)
+      k8s-cve           09:15   (agent k8s-cve-checker)
+      fortiguard-cve    09:30   (agent fortigate-cve-watch)
+    Also include any other directory you find under reports/ (except _status) as an extra report.
+
+    Steps:
+    1. Use get_file_contents to list reports/ and, for each report, read reports/<report>/latest.md.
+       Take the date from its first line. Also check that reports/<report>/YYYY/<today>.md exists.
+    2. Status per report: OK (today's file exists and latest.md is dated today), MISSING (no file for today),
+       STALE (latest.md older than today), MALFORMED (no "# <report> - YYYY-MM-DD" first line).
+       Copy each report's one-line verdict (the line after the heading) when present.
+    3. Write ONE commit with push_files containing reports/_status/latest.md and
+       reports/_status/YYYY/YYYY-MM-DD.md (same content), message "_status: YYYY-MM-DD", formatted as:
+         # _status - YYYY-MM-DD
+         <one line: "All N reports arrived" or "K of N reports missing: …">
+         | Report | Schedule | Status | Report date | Verdict |
+         followed by a short "Action" line for each report that is not OK
+         (e.g. "check the schedule's execution history in the kagent UI").
+    Never modify any path outside reports/_status/, and never touch another repository.
+    Use today's date in America/Toronto. Finish with the commit link.
+  tools:
+  - mcp:
+      server:
+        kind: RemoteMCPServer
+        name: github-mcp
+      tools: [get_file_contents, list_commits, push_files]
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: agent-summary-auditor
+  namespace: kagent
+  labels:
+    app.kubernetes.io/name: agent-summary-auditor
+    app.kubernetes.io/part-of: viper-env
+spec:
+  harnessRef:
+    name: high          # reserved pool: the audit still runs when the default pool is busy
+  template:
+    ref:
+      name: agent-summary-auditor
+  egressPolicyRefs:
+  - name: allow-github-mcp

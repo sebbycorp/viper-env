@@ -1,0 +1,26 @@
+# Step 5 (variant) - Agent with an INLINE template, here on Bedrock Claude.
+# Handy for one-offs; use a named AgentTemplate when several Agents share behaviour
+# (e.g. the same template on the default and the high tier).
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: demo-claude-helper
+  namespace: kagent
+  labels: {demo: substrate-enablement}
+spec:
+  harnessRef:
+    name: demo
+  template:
+    inline:
+      description: Same helper, Claude Haiku 4.5 on Bedrock via agentgateway, inline template
+      modelConfig:
+        name: demo-bedrock-claude-haiku
+      systemPrompt: |
+        You are a read-only Kubernetes helper for cluster omni-viper. Use tools, never guess.
+        Never change anything and never print Secret values. Be brief.
+      tools:
+      - mcp:
+          server:
+            kind: RemoteMCPServer
+            name: kagent-tool-server
+          tools: [k8s_get_resources, k8s_get_events]
