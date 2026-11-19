@@ -2,6 +2,7 @@
 # and publishes it to sebbycorp/agent-summary. One agent, one schedule per org:
 #   agentgateway-updates  -> github.com/agentgateway   (agentgateway.dev)
 #   kagent-updates        -> github.com/kagent-dev     (kagent.dev, incl. substrate)
+#   agentdesktop-updates  -> github.com/agentdesktop-dev (agentdesktop)
 # Read-only on upstream (search / list / read tools); the only write is push_files
 # into agent-summary. Egress: GitHub MCP only.
 ---

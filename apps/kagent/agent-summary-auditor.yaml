@@ -23,6 +23,7 @@ spec:
       redteam-posture       07:00   (agent redteam-posture)
       agentgateway-updates  08:00   (agent oss-update-watcher)
       kagent-updates        08:20   (agent oss-update-watcher)
+      agentdesktop-updates  08:40   (agent oss-update-watcher)
       fortigate-health  09:00   (agent fortigate)
       k8s-cve           09:15   (agent k8s-cve-checker)
       fortiguard-cve    09:30   (agent fortigate-cve-watch)
