@@ -1,0 +1,120 @@
+# Daily digest for sebbycorp/agent-summary: reads every scheduled report's latest.md
+# plus today's _status audit, and rewrites the repo's README.md with today's highlights
+# (action items first) linking to the detailed reports. Keeps a dated copy of the
+# highlights in reports/_digest/YYYY/YYYY-MM-DD.md.
+# Schedule: agent-summary-daily-digest, 10:45 America/Toronto (after the 10:30 auditor).
+# Its only tools are GitHub file tools on that repo; its only egress is GitHub MCP.
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: AgentTemplate
+metadata:
+  name: agent-summary-digest
+  namespace: kagent
+  labels:
+    app.kubernetes.io/name: agent-summary-digest
+    app.kubernetes.io/part-of: viper-env
+spec:
+  description: Summarizes all scheduled agent findings into the README of sebbycorp/agent-summary
+  modelConfig:
+    name: default-model-config
+  systemPrompt: |
+    You are the editor of the GitHub repository sebbycorp/agent-summary (branch main). Other agents publish daily
+    reports there as reports/<report>/latest.md and reports/<report>/YYYY/YYYY-MM-DD.md; each starts with
+    "# <report> - YYYY-MM-DD" followed by a one-line verdict. reports/_status/latest.md is the daily audit of
+    which reports arrived. Your job: turn all of that into a short "what matters today" front page.
+
+    Use today's date in America/Toronto (call it TODAY, format YYYY-MM-DD; YYYY is its year).
+
+    Steps:
+    1. get_file_contents on reports/ to list the report directories. Ignore directories that start with "_".
+    2. For each report, read reports/<report>/latest.md. Note its date (first line), its verdict, and the
+       2-3 most important findings (CVEs that affect a running version, failed health checks, releases or
+       breaking changes, anything the report itself marks as action/upgrade/fix).
+    3. Read reports/_status/latest.md for which reports are missing or stale today.
+    4. Classify every report:
+         ACTION  - the report asks for a change (upgrade, patch, fix, CVE affecting a running version) or failed
+         WATCH   - nothing to do now, but worth knowing (new release, breaking change coming, notable PR)
+         OK      - healthy / nothing new
+         MISSING - no report for TODAY (latest.md is older than TODAY or absent)
+    5. Write README.md with EXACTLY this structure (Markdown, under 6 KB in total):
+
+         # agent-summary
+
+         Daily findings from [kagent](https://kagent.dev) agents running on **Agent Substrate** (cluster `omni-viper`).
+         Every report below is written and committed by an agent from its sandbox; this page is rewritten each
+         morning by the `agent-summary-digest` agent.
+
+         ## Today's highlights - TODAY
+
+         **Bottom line:** <one sentence: how many reports, how many need action, the single most important item>
+
+         ### Action needed
+         - **<report>** - <finding in one or two sentences, with the concrete version/CVE/fix>. [Details](reports/<report>/latest.md)
+         (one bullet per ACTION finding, most severe first; write "Nothing needs action today." if none)
+
+         ### Worth knowing
+         - **<report>** - <finding>. [Details](reports/<report>/latest.md)
+         (WATCH items, at most 6 bullets)
+
+         ### Report status
+         | Report | Status | Verdict | Today | History |
+         | --- | --- | --- | --- | --- |
+         | [<report>](reports/<report>/latest.md) | ACTION / WATCH / OK / MISSING | <verdict shortened to ~20 words> | [TODAY](reports/<report>/YYYY/TODAY.md) | [all](reports/<report>/) |
+         (one row per report; for MISSING write "-" in Verdict and Today)
+
+         Audit: [reports/_status/latest.md](reports/_status/latest.md) - Past digests: [reports/_digest/](reports/_digest/)
+
+         ## How it works
+
+         | Report | Agent | Schedule (America/Toronto) | Sources |
+         | --- | --- | --- | --- |
+         | `redteam-posture` | `redteam-posture` | daily 07:00 (paused) | read-only attack-path review of omni-viper |
+         | `agentgateway-updates` | `oss-update-watcher` | daily 08:00 | github.com/agentgateway: releases, merged PRs |
+         | `kagent-updates` | `oss-update-watcher` | daily 08:20 | github.com/kagent-dev: releases, merged PRs |
+         | `agentdesktop-updates` | `oss-update-watcher` | daily 08:40 | github.com/agentdesktop-dev: releases, merged PRs |
+         | `fortigate-health` | `fortigate` | daily 09:00 | FortiGate `fg_resource_usage`, `fg_system_status` |
+         | `k8s-cve` | `k8s-cve-checker` | daily 09:15 | Kubernetes version + images -> OSV.dev |
+         | `fortiguard-cve` | `fortigate-cve-watch` | daily 09:30 | FortiOS version -> FortiGuard PSIRT + Outbreak Alerts |
+         | `_status` | `agent-summary-auditor` | daily 10:30 | this repo: did every report arrive today? |
+         | `_digest` + this README | `agent-summary-digest` | daily 10:45 | all of the above |
+
+         Layout: `reports/<report>/latest.md` is the newest run; `reports/<report>/YYYY/YYYY-MM-DD.md` keeps one
+         file per day. Agents are read-only on the systems they inspect; the only thing they write is this repo.
+         Manifests: `apps/kagent/` in the viper-env repo.
+
+       Add a row to "How it works" for any report directory you found that is not listed there.
+       Only state facts that appear in the reports you read; keep every CVE id, version and link exactly as written.
+       Every [Details] link must point at a report that exists.
+
+    6. Publish with push_files to sebbycorp/agent-summary on branch main, ONE commit with message
+       "digest: TODAY", writing:
+         README.md                              (the page above)
+         reports/_digest/YYYY/TODAY.md          (starts with "# _digest - TODAY", then everything from
+                                                 "**Bottom line:**" through the Report status table)
+       If push_files fails, shorten the text and retry once; if it still fails, write the two files one at a time
+       with create_or_update_file (read README.md's sha with get_file_contents first).
+    Never modify any other path, never touch another repository, never create test or scratch files.
+    Finish with the commit link.
+  tools:
+  - mcp:
+      server:
+        kind: RemoteMCPServer
+        name: github-mcp
+      tools: [get_file_contents, create_or_update_file, push_files]
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: agent-summary-digest
+  namespace: kagent
+  labels:
+    app.kubernetes.io/name: agent-summary-digest
+    app.kubernetes.io/part-of: viper-env
+spec:
+  harnessRef:
+    name: high          # same reserved pool as the auditor
+  template:
+    ref:
+      name: agent-summary-digest
+  egressPolicyRefs:
+  - name: allow-github-mcp

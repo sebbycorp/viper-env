@@ -23,10 +23,11 @@ spec:
       redteam-posture       07:00   (agent redteam-posture)
       agentgateway-updates  08:00   (agent oss-update-watcher)
       kagent-updates        08:20   (agent oss-update-watcher)
+      agentdesktop-updates  08:40   (agent oss-update-watcher)
       fortigate-health  09:00   (agent fortigate)
       k8s-cve           09:15   (agent k8s-cve-checker)
       fortiguard-cve    09:30   (agent fortigate-cve-watch)
-    Also include any other directory you find under reports/ (except _status) as an extra report.
+    Also include any other directory you find under reports/ as an extra report, except directories starting with "_" (_status, _digest).
 
     Steps:
     1. Use get_file_contents to list reports/ and, for each report, read reports/<report>/latest.md.

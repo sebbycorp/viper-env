@@ -22,3 +22,4 @@ resources:
   - agent-summary-auditor.yaml
   - agent-oss-update-watcher.yaml
   - agent-redteam-posture.yaml
+  - agent-summary-digest.yaml
