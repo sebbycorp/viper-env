@@ -20,8 +20,8 @@ apps/ (root Application omni-viper-root)
 
 | Component | Chart (`us-docker.pkg.dev/solo-public/...`) | Version | Release → namespace | Values |
 | --- | --- | --- | --- | --- |
-| agentgateway CRDs | `enterprise-agentgateway/charts/enterprise-agentgateway-crds` | v2026.11.0 | `enterprise-agentgateway-crds` → `agentgateway-system` | — |
-| agentgateway control plane | `enterprise-agentgateway/charts/enterprise-agentgateway` | v2026.11.0 | `enterprise-agentgateway` → `agentgateway-system` | [enterprise-agentgateway.yaml](../values/enterprise-agentgateway.yaml) |
+| agentgateway CRDs | `enterprise-agentgateway/charts/enterprise-agentgateway-crds` | v2026.11.1 | `enterprise-agentgateway-crds` → `agentgateway-system` | — |
+| agentgateway control plane | `enterprise-agentgateway/charts/enterprise-agentgateway` | v2026.11.1 | `enterprise-agentgateway` → `agentgateway-system` | [enterprise-agentgateway.yaml](../values/enterprise-agentgateway.yaml) |
 | Solo Enterprise UI | `solo-enterprise-helm/charts/management` | 0.5.9 | `management` → `agentgateway-system` | [management.yaml](../values/management.yaml) |
 | kagent CRDs | `kagent-enterprise-helm/charts/kagent-enterprise-crds` | 1.0.0-alpha10 | `kagent-crds` → `kagent` | — |
 | kagent | `kagent-enterprise-helm/charts/kagent-enterprise` | 1.0.0-alpha12 | `kagent` → `kagent` | [kagent-enterprise.yaml](../values/kagent-enterprise.yaml) |
@@ -38,12 +38,20 @@ v2026.11.0 (2026-11-14) adds the `EnterpriseAgentgatewayRoleBinding` CRD, an
 optional identity service (`identity.enabled`, off) and `licensing.licenseFilePath`,
 and drops the `agentgatewayModels.enabled` value. None of these are used here.
 
+v2026.11.1 (2026-11-18) changes no CRDs. It adds per-component Istio ambient
+enrollment (`*.istio.ambient.mode`, default `inherit`; the controller pod now
+gets `istio.io/dataplane-mode: none`), and the built-in UI subchart's ClickHouse
+database defaults to `agwe`. No Istio and no `ui.enabled` here, so neither
+matters. The CRD chart sets `installRBACPolicyCRD: false` because the management
+chart owns the `EnterpriseAgentgatewayRBACPolicy` CRD.
+
 Equivalent to the upstream install:
 
 ```bash
-helm upgrade -i -n agentgateway-system --version v2026.11.0 enterprise-agentgateway-crds \
-  oci://us-docker.pkg.dev/solo-public/enterprise-agentgateway/charts/enterprise-agentgateway-crds
-helm upgrade -i -n agentgateway-system --version v2026.11.0 enterprise-agentgateway \
+helm upgrade -i -n agentgateway-system --version v2026.11.1 enterprise-agentgateway-crds \
+  oci://us-docker.pkg.dev/solo-public/enterprise-agentgateway/charts/enterprise-agentgateway-crds \
+  --set installRBACPolicyCRD=false
+helm upgrade -i -n agentgateway-system --version v2026.11.1 enterprise-agentgateway \
   oci://us-docker.pkg.dev/solo-public/enterprise-agentgateway/charts/enterprise-agentgateway \
   --set-string licensing.licenseKey=$AGENTGATEWAY_LICENSE_KEY
 ```

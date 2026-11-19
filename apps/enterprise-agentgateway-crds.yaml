@@ -15,9 +15,14 @@ spec:
   sources:
     - repoURL: us-docker.pkg.dev/solo-public/enterprise-agentgateway/charts
       chart: enterprise-agentgateway-crds
-      targetRevision: v2026.11.0
+      targetRevision: v2026.11.1
       helm:
         releaseName: enterprise-agentgateway-crds
+        valuesObject:
+          # The management chart (apps/management.yaml) already installs the
+          # EnterpriseAgentgatewayRBACPolicy CRD. Argo renders without cluster
+          # access, so the chart's ownership lookup can't skip it; turn it off here.
+          installRBACPolicyCRD: false
   destination:
     server: https://kubernetes.default.svc
     namespace: agentgateway-system
