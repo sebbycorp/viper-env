@@ -1,5 +1,4 @@
-# Codex runtime adapter, pinned to OSS 1.0.0-alpha17: the runtime that ships with kagent Enterprise
-# 1.0.0-alpha12 (release-manifest.json). OSS alpha10-12 runtimes require KAGENT_API_URL and crash.
+# Runtime image: the release built-in (controller config.harnessImages), so no workload.image here.
 apiVersion: api.kagent.dev/v1alpha3
 kind: Harness
 metadata:
@@ -15,5 +14,3 @@ spec:
       location: s3://ate-snapshots/kagent/coding
     workerPoolRef:
       name: kagent-coding
-  workload:
-    image: ghcr.io/kagent-dev/kagent/codex-harness:1.0.0-alpha17@sha256:1c8565efce78c420b6726c68eaf010363fafd4eeec0c1afcd317d9e517434c22

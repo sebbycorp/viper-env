@@ -9,16 +9,23 @@
 #   ate-system/substrate-postgres-readwrite      ← apps/agentic-platform/postgres.yaml
 #   ate-system/postgres-ca-pool                  ← `kubectl ate admin make-ca-pool` (one-time)
 usePodCertificateAPI: true
-# Substrate 0.6 (as `kagent install` sets it): Harnesses set their own
+# As `kagent install` 2026.11.2 sets it: Harnesses set their own
 # snapshotPolicy.location, and ate-api authorizes every call through OpenFGA,
 # so the kagent controller must be a bootstrap owner or agents fail with
 # RuntimePreparationFailed (PermissionDenied).
 preview:
   - PerTemplateSnapshotLocation
+  - GoldenEgressPolicy
 ateApi:
   authorization:
     bootstrapOwners:
       - spiffe://cluster.local/ns/kagent/sa/kagent-controller
+      - system:serviceaccount:ate-system:ate-client
+# Substrate 1.x: the router listens on 443 with mTLS and admits only listed
+# client identities. kagent 2026.11.2 dials https://atenet-router.ate-system.svc:443.
+atenetRouter:
+  ingressAllowedSPIFFEIDs:
+    - spiffe://cluster.local/ns/kagent/sa/kagent-controller
 postgres:
   ownerRole: substrate_owner
   readWriteRole: substrate_readwrite
