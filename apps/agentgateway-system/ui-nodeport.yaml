@@ -1,4 +1,4 @@
-# Solo Enterprise UI on the LAN: http://172.16.10.178:30400. The management
+# Solo Enterprise UI on the LAN: http://172.16.10.59:30400. The management
 # chart cannot pin a nodePort, so its Service stays ClusterIP and this one is pinned.
 apiVersion: v1
 kind: Service

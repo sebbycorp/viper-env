@@ -13,7 +13,7 @@ data:
   talosVersion: "1.13.10"
   lastUpgrade: "2026-09-16"
   nodeName: talos-cyv-ekb
-  nodeLanIp: 172.16.10.178
+  nodeLanIp: 172.16.10.59
   intendedProxmoxNode: iceman
   vaultServer: http://172.16.10.111:8200
   vaultAuth: approle

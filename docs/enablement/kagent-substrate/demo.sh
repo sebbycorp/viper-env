@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Agent Substrate enablement - quick demo (about 5 min live).
-# omni-viper, kagent Enterprise 1.0.0-alpha12 + Agent Substrate 0.6.
+# omni-viper, kagent Enterprise 2026.11.2 + Agent Substrate 1.1 (first run on alpha12 + 0.6).
 #
 #   export KUBECONFIG=...    # omnictl --omniconfig ~/.config/omni/config kubeconfig -c omni-viper <file>
 #   ./demo.sh prep           # BEFORE the session: models + WorkerPool/Harness tier (about 30s)

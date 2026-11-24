@@ -74,10 +74,10 @@ kagent and Substrate in lockstep, and check the harness runtime pairing in
 
 | Surface | URL | Defined in |
 | --- | --- | --- |
-| agentgateway proxy | `http://172.16.10.178:30800` (`/openai`, `/spark`, `/mcp/fortigate`, …) | `apps/agentgateway-system/gateway.yaml` |
-| Bedrock proxy | `http://172.16.10.178:30801` | `apps/agentgateway-system/bedrock-gateway.yaml` |
-| Solo Enterprise UI | `http://172.16.10.178:30400` | `apps/agentgateway-system/ui-nodeport.yaml` |
-| kagent UI | `http://172.16.10.178:30500` (HTTPS `:30501` via nginx `kagent-ui-tls`, not in git) | `apps/kagent/ui-nodeport.yaml` |
+| agentgateway proxy | `http://172.16.10.59:30800` (`/openai`, `/spark`, `/mcp/fortigate`, …) | `apps/agentgateway-system/gateway.yaml` |
+| Bedrock proxy | `http://172.16.10.59:30801` | `apps/agentgateway-system/bedrock-gateway.yaml` |
+| Solo Enterprise UI | `http://172.16.10.59:30400` | `apps/agentgateway-system/ui-nodeport.yaml` |
+| kagent UI | `http://172.16.10.59:30500` (HTTPS `:30501` via nginx `kagent-ui-tls`, not in git) | `apps/kagent/ui-nodeport.yaml` |
 | DGX Spark (vLLM) | `dgx-spark.kagent.svc:8000` → `172.16.10.173:8000` | `apps/kagent/dgx-spark.yaml` |
 
 Neither chart can pin a nodePort, so the chart Services are `ClusterIP` and
