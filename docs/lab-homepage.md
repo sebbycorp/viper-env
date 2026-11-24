@@ -21,7 +21,7 @@ identifiers only** — not credentials.
 
 | Card | Where / what |
 | --- | --- |
-| agentgateway Enterprise | http://172.16.10.178:30400/age/ — Solo UI (tracing + cost) on omni-viper; proxy :30800 (`/openai`, `/spark`, `/mcp/fortigate`) |
+| agentgateway Enterprise | http://172.16.10.59:30400/age/ — Solo UI (tracing + cost) on omni-viper; proxy :30800 (`/openai`, `/spark`, `/mcp/fortigate`) |
 | OSS gateway — agw-oss | LXC 140 @ `172.16.10.114` (iceman) |
 | OSS gateway — bifrost | LXC 141 @ `172.16.10.120` (iceman) |
 | OSS gateway — litellm | LXC 142 @ `172.16.10.125` (iceman) |
@@ -29,8 +29,8 @@ identifiers only** — not credentials.
 | iceman | Proxmox node `172.16.10.5` — target host for guest migration |
 | viper | Proxmox node `172.16.10.6` — source host; guests are moving off this node |
 | Omni | https://maniak.na-west-1.omni.siderolabs.io/ (cluster `omni-viper`) |
-| Argo CD | https://172.16.10.178:30443 and :30080 |
-| kagent | https://viper.maniak.lab:30501/ (preferred; lab self-signed). hosts/DNS `viper.maniak.lab` → `172.16.10.178`. HTTP `:30500` is the fallback. Trust notes: [kagent-substrate.md](kagent-substrate.md) |
+| Argo CD | https://172.16.10.59:30443 and :30080 |
+| kagent | https://viper.maniak.lab:30501/ (preferred; lab self-signed). hosts/DNS `viper.maniak.lab` → `172.16.10.59`. HTTP `:30500` is the fallback. Trust notes: [kagent-substrate.md](kagent-substrate.md) |
 | FortiGate agent | Same kagent UI — pick agent `fortigate` ([plan](fortigate-agent-omni.md)) |
 | TypeSafe / Jev | Same kagent UI — gated SRE / Jev path ([plan](typesafe-jev.md)) |
 | Vault | `http://172.16.10.111:8200` (HTTP only; see root README) |

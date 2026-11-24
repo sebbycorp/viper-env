@@ -8,7 +8,7 @@ Phase-1 notes and optional overlays for the Omni-managed Kubernetes cluster.
 | Omni UI | https://maniak.na-west-1.omni.siderolabs.io/ |
 | Kubernetes | 1.36.4 (upgrade 2026-09-16) |
 | OS / node image | Talos 1.13.10 |
-| Node | `talos-cyv-ekb` @ `172.16.10.178` |
+| Node | `talos-cyv-ekb` @ `172.16.10.59` |
 | Host placement | Should live on Proxmox **iceman** (`172.16.10.5`); guests migrating off **viper** (`172.16.10.6`) |
 | Feature gates | `PodCertificateRequest` + `ClusterTrustBundle` (Agent Substrate) |
 | GitOps | Argo CD (already installed; NodePorts `:30443` / `:30080`) |

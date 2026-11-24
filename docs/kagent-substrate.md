@@ -12,14 +12,14 @@ manifest originals ([fortigate-agent-omni.md](fortigate-agent-omni.md)).
 | --- | --- |
 | Cluster | `omni-viper` |
 | Omni UI | https://maniak.na-west-1.omni.siderolabs.io/ |
-| Node | `talos-cyv-ekb` @ `172.16.10.178` |
+| Node | `talos-cyv-ekb` @ `172.16.10.59` (moved from `172.16.10.178` on 2026-11-02) |
 | Versions | Talos **v1.13.10**, Kubernetes **v1.36.4** (upgrade 2026-09-16) |
 | Feature gates | `PodCertificateRequest` + `ClusterTrustBundle` (required for Agent Substrate) |
 | kagent | Solo Enterprise for kagent **2026.11.2** (2026-11-23, fresh DB schemas; was 1.0.0-alpha12, alpha10, alpha3) |
 | Agent Substrate | Substrate Enterprise **1.1.0-alpha1-7354c972** (Argo CD Application `substrate`, reinstalled 2026-11-23; was 0.6.0-b15382d4) |
-| Argo CD | https://172.16.10.178:30443 and :30080 |
+| Argo CD | https://172.16.10.59:30443 and :30080 |
 | kagent UI (HTTPS, preferred) | https://viper.maniak.lab:30501/ |
-| kagent UI (HTTP, fallback) | http://172.16.10.178:30500 |
+| kagent UI (HTTP, fallback) | http://172.16.10.59:30500 |
 | Host placement | Should live on Proxmox **iceman** (`172.16.10.5`); guests are migrating off **viper** (`172.16.10.6`) |
 
 ### Namespaces
@@ -41,14 +41,15 @@ workstation. **Never commit them.**
 hosts / DNS (required for the hostname URL):
 
 ```text
-172.16.10.178 viper.maniak.lab
+172.16.10.59 viper.maniak.lab
 ```
 
 Use **`viper.maniak.lab`**, not `kagent.viper.lab` or `kagent.maniak.lab`.
-Certificate SANs should include DNS `viper.maniak.lab` and IP
-`172.16.10.178`. Infra will re-issue the live `kagent-ui-tls` cert
-separately so those names match — do not re-issue it from this repo.
-After that, https://172.16.10.178:30501/ still works via the IP SAN.
+The live `kagent-ui-tls` certificate has SANs DNS `viper.maniak.lab` and IP
+`172.16.10.178`, which is the node's **old** address (checked 2026-11-24, valid
+to 2027-09-17). The hostname URL is therefore fine, but
+https://172.16.10.59:30501/ gives a name mismatch until infra re-issues the
+cert with the new IP SAN. Do not re-issue it from this repo.
 
 This is an **intentional lab self-signed / internal CA**, not Let’s
 Encrypt. The UI needs a browser **secure context** so
@@ -74,7 +75,7 @@ repo.
 | ClusterIssuer | `selfsigned-cluster-issuer` |
 | Lab CA Certificate | `kagent-lab-ca` |
 | Lab CA ClusterIssuer | `kagent-lab-ca-issuer` |
-| UI Certificate | `kagent-ui-tls` in namespace `kagent` (secret `kagent-ui-tls`). Intended SANs: DNS `viper.maniak.lab`, IP `172.16.10.178` (infra re-issues separately) |
+| UI Certificate | `kagent-ui-tls` in namespace `kagent` (secret `kagent-ui-tls`). Live SANs: DNS `viper.maniak.lab`, IP `172.16.10.178` (old node IP; should become `172.16.10.59` when infra re-issues) |
 | TLS front | Deployment `kagent-ui-tls` (nginx) + Service NodePort **30501** terminating TLS → `kagent-ui:8080` |
 | HTTP front | Service `kagent-ui-nodeport` NodePort **30500** (GitOps, `apps/kagent/ui-nodeport.yaml`) |
 

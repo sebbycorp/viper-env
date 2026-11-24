@@ -1,8 +1,11 @@
 # Enablement: building agents on kagent Enterprise + Agent Substrate
 
 A quick (about 5–7 minute) live demo, plus the reference snippets behind it. Everything here
-was run on **omni-viper** on 2026-11-03: kagent Enterprise **1.0.0-alpha12**,
-Agent Substrate Enterprise **0.6.0-b15382d4**, API `api.kagent.dev/v1alpha3`.
+was run on **omni-viper** on 2026-11-03 against kagent Enterprise 1.0.0-alpha12 and
+Agent Substrate 0.6. The cluster is now on kagent Enterprise **2026.11.2** and Agent Substrate
+Enterprise **1.1.0-alpha1-7354c972** (API `api.kagent.dev/v1alpha3`, `ate.dev/v1`). The manifests and
+snippets were updated for that on 2026-11-24 and pass a server-side dry run, but the live demo
+has not been re-run end to end since the upgrade, so the timings below are from the first run.
 
 ```
 docs/enablement/kagent-substrate/
@@ -42,7 +45,7 @@ paths. Hosted version: https://claude.ai/artifact/TFK7vSXE8RtGbADN6AxKM8 (privat
 | **ModelConfig** | `api.kagent.dev/v1alpha3` | Which LLM, which URL, which key? | platform team |
 | **AgentTemplate** | `api.kagent.dev/v1alpha3` | What does the agent do? (prompt, model, tools) | agent author |
 | **Harness** | `api.kagent.dev/v1alpha3` | Which runtime runs it, on which pool, with snapshots where? | platform team |
-| **WorkerPool** | `ate.dev/v1alpha1` | How many sandboxed workers, what isolation (gVisor/microVM)? | platform team |
+| **WorkerPool** | `ate.dev/v1` | How many sandboxed workers, what isolation (gVisor/microVM)? | platform team |
 | **Agent** | `api.kagent.dev/v1alpha3` | Pair *one* template with *one* harness. | agent author |
 
 Key talking points:
@@ -124,12 +127,12 @@ Extras (if there's time): **A**: `05-agent-inline.yaml` puts an Agent with an in
 
 ### Known limitations
 
-- **Chat is UI-only in this demo.** alpha12 serves chat through the UI's `/a2a` proxy (controller port 8085
+- **Chat is UI-only in this demo.** kagent Enterprise serves chat through the UI's `/a2a` proxy (controller port 8085
   with auto-auth). The `kagent invoke` CLI (OSS 0.10.x) and plain curl to the controller don't work against it.
 - **The Spark/Qwen agent may refuse to name its model** ("I can't share details about the underlying model").
   Show the model in the chat's *Conversation details* panel instead.
 - **Some snippets below weren't run in the demo.** Native providers, skills, sub-agents, compaction and memory are
-  checked only against `kubectl explain` on alpha12.
+  checked only against `kubectl explain` on alpha12, not re-checked on 2026.11.2.
 - **The demo objects live in the `kagent` namespace but outside Argo CD** (applied by hand, labelled
   `demo=substrate-enablement`). Always run `./demo.sh cleanup` afterwards.
 
@@ -232,7 +235,7 @@ spec:
       # requireApproval: true   # human-in-the-loop before each call
 ```
 
-Other things a template can carry (field names from `kubectl explain agenttemplate.spec` on alpha12; not exercised in the demo):
+Other things a template can carry (field names from `kubectl explain agenttemplate.spec` on alpha12; not exercised in the demo, not re-checked on 2026.11.2):
 
 ```yaml
   systemPromptFrom: {name: my-prompts, key: k8s-helper}     # prompt from a ConfigMap
@@ -250,7 +253,7 @@ Other things a template can carry (field names from `kubectl explain agenttempla
 ## 3. Harness + WorkerPool: the runtime tier
 
 ```yaml
-apiVersion: ate.dev/v1alpha1
+apiVersion: ate.dev/v1
 kind: WorkerPool
 metadata:
   name: kagent-demo
@@ -260,9 +263,9 @@ metadata:
     kagent.dev/worker-pool-namespace: kagent
 spec:
   replicas: 2                       # >=2 so a new revision can prepare while the old one serves
-  sandboxClasses:                   # Substrate 0.6 (0.5 used spec.sandboxClass)
+  sandboxClasses:                   # names are immutable once set
   - {name: gvisor, configRef: {name: gvisor-default}}       # or microvm
-  workerImage: us-docker.pkg.dev/solo-public/substrate-enterprise/ateworker-gvisor:v0.6.0-b15382d4
+  workerImage: us-docker.pkg.dev/solo-public/substrate-enterprise/ateworker-gvisor:v1.1.0-alpha1-7354c972
   template:
     serviceAccountName: kagent-default
     # priorityClassName: substrate-high   # see the "high" tier
@@ -275,8 +278,7 @@ spec:
   substrate:
     workerPoolRef: {name: kagent-demo}
     snapshotPolicy: {location: s3://ate-snapshots/kagent/demo}
-  workload:
-    image: ghcr.io/kagent-dev/kagent/golang-adk:1.0.0-alpha17@sha256:d20d4117...
+  # no workload.image: the release's built-in runtime image is used
 ```
 
 The `kagent` runtime also takes context compaction and long-term memory (fields from `kubectl explain`; not exercised in the demo):
@@ -288,8 +290,10 @@ The `kagent` runtime also takes context compaction and long-term memory (fields 
 ```
 
 > **Gotchas:**
-> - The runtime image must match the controller's *runtime contract*, not its version number:
->   Enterprise alpha12 ↔ OSS `golang-adk` / `codex-harness` **1.0.0-alpha17**. Pin by digest.
+> - Leave `workload.image` unset. The Harness then runs the release's built-in runtime image
+>   (controller `config.harnessImages`, pinned by digest), which always matches the controller.
+>   Up to alpha12 the image had to be pinned by hand (OSS `golang-adk` 1.0.0-alpha17); a pin left over
+>   from another release breaks the runtime contract. Set it only for a BYO runtime.
 > - The `workerImage` must match the Substrate control-plane version.
 
 ## 4. Agent: pair them

@@ -1,4 +1,4 @@
-# kagent UI on the LAN: http://172.16.10.178:30500 (HTTPS :30501 is the nginx
+# kagent UI on the LAN: http://172.16.10.59:30500 (HTTPS :30501 is the nginx
 # kagent-ui-tls front). The chart can only switch the Service type, so pin it here.
 apiVersion: v1
 kind: Service

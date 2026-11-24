@@ -11,7 +11,7 @@ kubeconfigs, and license material are not.
 | --- | --- |
 | [lab-homepage.md](lab-homepage.md) | Lab Homepage LXC (gethomepage) on iceman |
 | [agentic-stack.md](agentic-stack.md) | kagent + agentgateway Enterprise via Argo CD: charts, Vault paths, cutover |
-| [kagent-substrate.md](kagent-substrate.md) | OSS kagent + Agent Substrate on this Omni cluster (HTTPS UI `:30501`) |
+| [kagent-substrate.md](kagent-substrate.md) | kagent Enterprise + Agent Substrate on this Omni cluster: access, HTTPS UI `:30501`, upgrade runbooks |
 | [enablement/kagent-substrate/](enablement/kagent-substrate/README.md) | Team enablement: build agents (models, AgentTemplate, Harness, WorkerPool) + quick live demo |
 | [typesafe-jev.md](typesafe-jev.md) | TypeSafe / Jev MCP + gated SRE agent (plan) |
 | [fortigate-agent-omni.md](fortigate-agent-omni.md) | FortiGate agent plan adapted from k8s-viper |
