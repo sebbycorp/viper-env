@@ -19,7 +19,7 @@ spec:
   sources:
     - repoURL: us-docker.pkg.dev/solo-public/solo-enterprise-helm/charts
       chart: management
-      targetRevision: 0.5.9
+      targetRevision: 0.5.18
       helm:
         releaseName: management
         valueFiles:

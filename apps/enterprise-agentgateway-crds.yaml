@@ -15,7 +15,7 @@ spec:
   sources:
     - repoURL: us-docker.pkg.dev/solo-public/enterprise-agentgateway/charts
       chart: enterprise-agentgateway-crds
-      targetRevision: v2026.11.1
+      targetRevision: v2026.11.1-patch.0
       helm:
         releaseName: enterprise-agentgateway-crds
         valuesObject:
