@@ -68,7 +68,7 @@ substrateWorkerPool:
   name: kagent-default
   replicas: 3
   sandboxClass: gvisor
-  workerImage: us-docker.pkg.dev/solo-public/substrate-enterprise/ateworker-gvisor:v0.6.0-b15382d4
+  workerImage: us-docker.pkg.dev/solo-public/substrate-enterprise/ateworker-gvisor:v1.1.0-alpha1-7354c972
 # --- Default model: Spark Qwen (DGX Spark 172.16.10.173 via Service kagent/dgx-spark) ---
 providers:
   default: openAI
