@@ -15,8 +15,8 @@ manifest originals ([fortigate-agent-omni.md](fortigate-agent-omni.md)).
 | Node | `talos-cyv-ekb` @ `172.16.10.178` |
 | Versions | Talos **v1.13.10**, Kubernetes **v1.36.4** (upgrade 2026-09-16) |
 | Feature gates | `PodCertificateRequest` + `ClusterTrustBundle` (required for Agent Substrate) |
-| kagent | Solo Enterprise for kagent **1.0.0-alpha12** (2026-10-30, fresh DB schemas; was 1.0.0-alpha10, before that alpha3) |
-| Agent Substrate | Substrate Enterprise **0.6.0-b15382d4** (Argo CD Application `substrate`; was 0.5.0-alpha3-e492046) |
+| kagent | Solo Enterprise for kagent **2026.11.2** (2026-11-23, fresh DB schemas; was 1.0.0-alpha12, alpha10, alpha3) |
+| Agent Substrate | Substrate Enterprise **1.1.0-alpha1-7354c972** (Argo CD Application `substrate`, reinstalled 2026-11-23; was 0.6.0-b15382d4) |
 | Argo CD | https://172.16.10.178:30443 and :30080 |
 | kagent UI (HTTPS, preferred) | https://viper.maniak.lab:30501/ |
 | kagent UI (HTTP, fallback) | http://172.16.10.178:30500 |
@@ -169,12 +169,74 @@ snapshot location. `kagent install` sets both. Other changes:
 - Argo kept a stale schema for the changed CRDs (`ComparisonError ... field not
   declared in schema`) until the `argocd-application-controller` restarted.
 
+### Upgrading kagent and Substrate (alpha12 / 0.6 → 2026.11.2 / 1.1, 2026-11-23)
+
+kagent 2026.11.2 is built against Substrate 1.1.0-alpha1 (chart
+`1.1.0-alpha1-7354c972`; the kagent release notes list the pair). Substrate has
+no upgrade path from 0.6 ("reinstall"), its CRDs moved from `ate.dev/v1alpha1`
+to `ate.dev/v1`, and kagent's baseline migration changed again, so this was a
+reinstall of Substrate and fresh `kagent`, `enterprise` and `substrate` schemas.
+From 2026.11.x on, the documented in-place upgrade keeps the data
+(<https://docs.solo.io/kagent/latest/operations/upgrade/>).
+
+What was done, in order:
+
+1. Back up: `pg_dump --format=custom` of `kagent` and `substrate`, every
+   kagent/`ate.dev` object, and the `kagent.scheduled_run` rows. Schedules live
+   only in Postgres; their `data` column is the `ScheduledRun` protobuf.
+   `kubectl exec ... pg_dump > file` and `kubectl cp` both truncated the 20 MB
+   dump, so dump inside the pod and pull it in 2 MB `dd` chunks, then compare
+   sha256.
+2. Pause auto-sync on `omni-viper-root` and on `kagent-crds`,
+   `kagent-enterprise`, `substrate`, `substrate-crds`, `substrate-podcert`
+   (remove `spec.syncPolicy.automated`). With the root paused, set each child's
+   `targetRevision` by hand and sync it with an `operation` patch. Merge the PR.
+3. Scale `kagent-controller` to 0. Delete the WorkerPools, scale the
+   `ate-system` Deployments to 0 and delete the `atelet` DaemonSet.
+4. Delete the `workerpools`, `sandboxconfigs` and `csidriverconfigs` `ate.dev`
+   CRDs. `SandboxConfig/gvisor-default` keeps a
+   `sandboxconfig.ate.dev/workerpool-protection` finalizer that nothing removes
+   once ate-controller is down; clear it by hand.
+5. Recreate the three schemas as `postgres` without touching roles or
+   passwords: `DROP SCHEMA x CASCADE; CREATE SCHEMA x AUTHORIZATION <owner>;`
+   then the `REVOKE`/`GRANT USAGE`/four `ALTER DEFAULT PRIVILEGES` statements
+   from `setup.sql`. Running `setup.sql` itself resets the login passwords to
+   its variables, and an empty one clears the password.
+6. On the node, delete `/var/lib/ate/image-cache` (required), plus `actors`
+   and `snapshot-cache` (orphans of the wiped database).
+7. Sync `substrate-podcert`, `substrate-crds`, `substrate`. The sync fails on
+   the completed `rustfs-bucket-init` Job (immutable); delete the Job and sync
+   again.
+8. Sync `kagent-crds`, `kagent-enterprise`, then `kagent` (no auto-sync). All
+   Agents went Ready in about a minute.
+9. Put `automated` back on `omni-viper-root`; it restores the children.
+10. Recreate the schedules through `ScheduledRunService/CreateScheduledRun`
+    (gRPC-web on controller 8083, token from the autoauth sidecar on 5556).
+
+Values that changed (`kagent install` 2026.11.2 sets the same):
+
+- `values/substrate.yaml`: `preview` adds `GoldenEgressPolicy`;
+  `bootstrapOwners` adds `system:serviceaccount:ate-system:ate-client`;
+  `atenetRouter.ingressAllowedSPIFFEIDs` lists the kagent controller, because
+  the router serves mTLS on 443 and kagent now dials
+  `https://atenet-router.ate-system.svc:443`.
+- Harnesses carry no `workload.image`: the controller uses the release's
+  built-in runtime images (`config.harnessImages`, pinned by digest).
+- The chart no longer deploys the `solo-enterprise-k8sobjects` collector by
+  default, and it drops the `runtimes.kagent-enterprise.solo.io` CRD (still on
+  the cluster, because `kagent-crds` does not prune).
+
+Left for later: atelet still ships inside the `substrate` release
+(`atelet.enabled`, deprecated). New installs use the separate
+`substrate-atelet` chart, which the documented upgrade order needs (podcert,
+atelet, WorkerPool image, CRDs, substrate, kagent).
+
 ## Agent Substrate
 
 | Preference | Value |
 | --- | --- |
-| Charts | `oci://us-docker.pkg.dev/solo-public/enterprise-substrate-helm` 0.6.0-b15382d4 |
-| Worker image | `us-docker.pkg.dev/solo-public/substrate-enterprise/ateworker-gvisor:v0.6.0-b15382d4` (renamed from `ateom-gvisor` in 0.6) |
+| Charts | `oci://us-docker.pkg.dev/solo-public/enterprise-substrate-helm` 1.1.0-alpha1-7354c972 |
+| Worker image | `us-docker.pkg.dev/solo-public/substrate-enterprise/ateworker-gvisor:v1.1.0-alpha1-7354c972` (renamed from `ateom-gvisor` in 0.6) |
 | WorkerPools | `kagent-default` (chart), `kagent-high`, `kagent-coding` (Argo) in namespace `kagent` |
 | ate-api | `dns:///api.ate-system.svc:443` |
 
@@ -202,13 +264,11 @@ To move an agent to another tier, change `spec.harnessRef` on its Agent.
 Worker pods request no CPU, so the extra pools fit on the CPU-bound node;
 the PriorityClass only decides eviction order and never preempts other pods.
 
-Harness runtime images must match the controller's runtime contract, not
-its version number. kagent Enterprise 1.0.0-alpha12 pairs with OSS
-**1.0.0-alpha17** runtimes (`ghcr.io/kagent-dev/kagent/golang-adk:1.0.0-alpha17`
-and `ghcr.io/kagent-dev/kagent/codex-harness:1.0.0-alpha17`, by digest; the
-release's `release-manifest.json` lists them). The
-OSS alpha10-12 runtimes still require `KAGENT_API_URL` and crash before the
-golden snapshot (`GoldenActorCrashed`). Codex speaks the OpenAI
+Harnesses set no `workload.image`. Since 2026.11.x the release ships its own
+runtime images (`golang-adk`, `codex-harness`, `claude-harness` in
+`us-docker.pkg.dev/solo-public/kagent-enterprise`, pinned by digest in the
+controller's `config.harnessImages`), so the runtime always matches the
+controller. Codex speaks the OpenAI
 Responses API, so ModelConfig `codex-gpt-5-4` uses `apiFormat: responses`
 and calls the in-cluster agentgateway over HTTP (`/openai/v1`). The
 `/openai` backend has `policies.ai.routes` so `/v1/responses` isn't parsed
