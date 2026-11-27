@@ -12,6 +12,10 @@ global:
   licensing:
     createSecret: false
     secretName: enterprise-kagent-license
+  # Record prompts/answers/tool args in traces. Needed for agent evals: with it off,
+  # evaluations check tool names only and LLM judges see no messages.
+  telemetry:
+    captureContent: true
 # --- Database: in-cluster Postgres (ns postgres, pgvector/pgvector:pg16), password auth ---
 # Since 1.0.0-alpha11 the controller uses two connections: owner (migrations) and
 # readWrite (every other query). Both Secrets hold the kagent_user login, which is a
@@ -112,3 +116,13 @@ ui:
     ports:
       port: 8080
       targetPort: 8080
+# --- Agent evals (agentevals subchart; Evaluations pages + APIs in the kagent UI) ---
+# Needs global.telemetry.backend=clickhouse (chart default). Experimental upstream.
+# Judge = Spark Qwen via default-model-config; agentevals may read only the Secrets listed.
+agentevals:
+  enabled: true
+  judge:
+    defaultModelConfig: kagent/default-model-config
+    namespace: kagent
+    secretNames:
+      - kagent-spark-openai
